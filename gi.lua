@@ -1,5 +1,12 @@
 -- =====================================================
--- UI Garden Incremental
+-- UI Garden Incremental V1.0.31
+-- =====================================================
+-- [WORK RULES]
+-- 1. Fitur baru: jangan tambah local di top-level; bungkus di fungsi/table (hindari limit 200).
+-- 2. Setiap patch baru: naikkan versi Vx.x.x +1 di bagian terakhir (maks V999.999.999). (wajib sinkron di tag komentar paling atas, State.Version, dan VersionLabel.Text)
+-- 3. Selalu balas dengan bahasa indonesia.
+-- 4. Setiap patch baru: update CHANGELOG.md dan salin versi lama ke folder Old Version Garden Incremental Script terlebih dahulu.
+-- 5. Jika perubahan karena memperbaiki masalah (bukan fitur baru), tulis catatan masalah patch sebelumnya di CHANGELOG.md.
 -- =====================================================
 
 -- Services
@@ -37,6 +44,18 @@ local State = {
     C2SCaptureArmed = false,
     C2SCaptureExpires = 0
 }
+
+State.Version = "V1.0.31"
+State.ValidateVersion = function(labelText)
+    if type(labelText) ~= "string" then
+        return false
+    end
+    if labelText ~= State.Version then
+        warn("[GardenIncremental] Versi mismatch: State.Version=" .. tostring(State.Version) .. ", VersionLabel.Text=" .. tostring(labelText))
+        return false
+    end
+    return true
+end
 
 State.RuneTeleportData = State.RuneTeleportData or {}
 
@@ -119,11 +138,50 @@ local function cleanupAll()
     end
     State.ScreenGui = nil
 
+    if State.AutoBuyLogGui and State.AutoBuyLogGui.Parent then
+        State.AutoBuyLogGui:Destroy()
+    end
+    State.AutoBuyLogGui = nil
+
+    if State.FullAutomationLogGui and State.FullAutomationLogGui.Parent then
+        State.FullAutomationLogGui:Destroy()
+    end
+    State.FullAutomationLogGui = nil
+
+    -- Stop any background loops that are not connection-based
+    if State.HellStarterTeleportToken then
+        State.HellStarterTeleportToken = State.HellStarterTeleportToken + 1
+    end
+    State.HellStarterTeleportRunning = false
+
     if ENV and ENV[GLOBAL_KEY] then
         ENV[GLOBAL_KEY] = nil
     end
 end
 
+State.AntiAfk = State.AntiAfk or {}
+State.AntiAfk.Init = State.AntiAfk.Init or function()
+    if State.AntiAfk.Active then
+        return
+    end
+    State.AntiAfk.Active = true
+    local ok, vu = pcall(game.GetService, game, "VirtualUser")
+    local lp = Players and Players.LocalPlayer or nil
+    if not (ok and vu and lp and lp.Idled) then
+        return
+    end
+    local conn = lp.Idled:Connect(function()
+        pcall(function()
+            vu:CaptureController()
+            vu:ClickButton2(Vector2.new(0, 0))
+        end)
+    end)
+    trackConnection(conn)
+end
+
+State.AntiAfk.Init()
+
+State.Cleanup = cleanupAll
 ENV[GLOBAL_KEY] = State
 
 -- [FUNC] Construct teleport data
@@ -171,7 +229,7 @@ end
 -- =====================================================
 local ConsoleLogBuffer = {}
 local MaxConsoleLogs = 200
-local function getLogHistoryErrors()
+local function getLogHistoryAll()
     if not LogService.GetLogHistory then
         return {}
     end
@@ -183,20 +241,15 @@ local function getLogHistoryErrors()
     end
     local out = {}
     for _, item in ipairs(history) do
-        if item.messageType == Enum.MessageType.MessageError then
-            out[#out + 1] = {
-                Message = item.message,
-                Type = item.messageType,
-                Time = os.time()
-            }
-        end
+        out[#out + 1] = {
+            Message = item.message,
+            Type = item.messageType,
+            Time = os.time()
+        }
     end
     return out
 end
 local function pushConsoleLog(message, msgType)
-    if msgType ~= Enum.MessageType.MessageError then
-        return
-    end
     ConsoleLogBuffer[#ConsoleLogBuffer + 1] = {
         Message = message,
         Type = msgType,
@@ -241,7 +294,12 @@ local Config = {
     RemoteSpy = false,
     RemoteLogger = false,
     Theme = "Default",
+    Font = "Gotham",
     LogFilter = "",
+    UtilityTrackNames = "",
+    UtilityTrackValues = true,
+    UtilityTrackAttributes = true,
+    UtilityLoggerEnabled = false,
     WindowWidth = 640,
     WindowHeight = 430,
     HellStarterEnabled = false,
@@ -256,7 +314,11 @@ local Config = {
     AutoReloadEnabled = false,
     AutoReloadSource = "",
     AutoReloadUrl = "",
-    AutoReloadFile = ""
+    AutoReloadFile = "",
+    SectionStates = {},
+    AutoBuyGroups = {},
+    AutoBuyLogEnabled = false,
+    FullAutomationLogEnabled = false
 }
 
 local MINIMIZE_ICON_URL = "https://img.icons8.com/liquid-glass/96/hacking.png"
@@ -313,6 +375,13 @@ local function saveConfig()
 end
 
 loadConfig()
+
+if type(Config.SectionStates) ~= "table" then
+    Config.SectionStates = {}
+end
+if type(Config.AutoBuyGroups) ~= "table" then
+    Config.AutoBuyGroups = {}
+end
 
 if Config.FirstRun then
     Config.NoFog = false
@@ -462,12 +531,45 @@ local Themes = {
         Accent = Color3.fromRGB(0, 200, 200),
         Text = Color3.fromRGB(220, 240, 245),
         Muted = Color3.fromRGB(140, 170, 180)
+    },
+    Mint = {
+        Main = Color3.fromRGB(20, 28, 28),
+        Panel = Color3.fromRGB(28, 40, 40),
+        Accent = Color3.fromRGB(64, 220, 180),
+        Text = Color3.fromRGB(235, 245, 242),
+        Muted = Color3.fromRGB(160, 190, 185)
+    },
+    Sunset = {
+        Main = Color3.fromRGB(28, 22, 30),
+        Panel = Color3.fromRGB(40, 30, 44),
+        Accent = Color3.fromRGB(255, 120, 90),
+        Text = Color3.fromRGB(240, 230, 240),
+        Muted = Color3.fromRGB(170, 155, 180)
+    },
+    Aurora = {
+        Main = Color3.fromRGB(18, 24, 36),
+        Panel = Color3.fromRGB(26, 34, 52),
+        Accent = Color3.fromRGB(120, 190, 255),
+        Text = Color3.fromRGB(230, 238, 245),
+        Muted = Color3.fromRGB(150, 165, 185)
     }
 }
 
 local ThemeRegistry = {}
+local function getTheme(name)
+    return Themes[name] or Themes.Default
+end
+
+local function applyThemeToItem(item, theme)
+    if item and item.inst and item.inst.Parent then
+        item.inst[item.prop] = theme[item.role]
+    end
+end
+
 local function registerTheme(inst, prop, role)
-    ThemeRegistry[#ThemeRegistry + 1] = {inst = inst, prop = prop, role = role}
+    local item = {inst = inst, prop = prop, role = role}
+    ThemeRegistry[#ThemeRegistry + 1] = item
+    applyThemeToItem(item, getTheme(Config.Theme))
 end
 
 local ToggleRenders = {}
@@ -484,11 +586,9 @@ local ActiveTeleportButton
 local setupAutoShop
 
 local function applyTheme(name)
-    local t = Themes[name] or Themes.Default
+    local t = getTheme(name)
     for _, item in ipairs(ThemeRegistry) do
-        if item.inst and item.inst.Parent then
-            item.inst[item.prop] = t[item.role]
-        end
+        applyThemeToItem(item, t)
     end
     for _, render in ipairs(ToggleRenders) do
         pcall(render)
@@ -523,6 +623,72 @@ local function applyTheme(name)
             end
         end
     end
+    if State.Fonts and State.Fonts.Apply then
+        State.Fonts.Apply()
+    end
+end
+
+State.Fonts = State.Fonts or {}
+State.Fonts.Families = State.Fonts.Families or {
+    Gotham = {
+        Regular = Enum.Font.Gotham,
+        Semibold = Enum.Font.GothamSemibold,
+        Medium = Enum.Font.GothamMedium
+    },
+    SourceSans = {
+        Regular = Enum.Font.SourceSans,
+        Semibold = Enum.Font.SourceSansSemibold,
+        Medium = Enum.Font.SourceSans
+    },
+    Arial = {
+        Regular = Enum.Font.Arial,
+        Semibold = Enum.Font.ArialBold,
+        Medium = Enum.Font.Arial
+    },
+    Code = {
+        Regular = Enum.Font.Code,
+        Semibold = Enum.Font.Code,
+        Medium = Enum.Font.Code
+    }
+}
+
+State.Fonts.Resolve = State.Fonts.Resolve or function(role)
+    local name = Config.Font or "Gotham"
+    local family = State.Fonts.Families and State.Fonts.Families[name] or nil
+    if not family then
+        family = State.Fonts.Families and State.Fonts.Families.Gotham or nil
+    end
+    if not family then
+        return Enum.Font.Gotham
+    end
+    return family[role or "Regular"] or family.Regular or Enum.Font.Gotham
+end
+
+State.Fonts.ApplyToRoot = State.Fonts.ApplyToRoot or function(root)
+    if not root then
+        return
+    end
+    for _, inst in ipairs(root:GetDescendants()) do
+        if inst:IsA("TextLabel") or inst:IsA("TextButton") or inst:IsA("TextBox") then
+            local role = inst:GetAttribute("FontRole")
+            if not role then
+                role = "Regular"
+                if inst.Font == Enum.Font.GothamSemibold or inst.Font == Enum.Font.SourceSansSemibold or inst.Font == Enum.Font.ArialBold then
+                    role = "Semibold"
+                elseif inst.Font == Enum.Font.GothamMedium then
+                    role = "Medium"
+                end
+                inst:SetAttribute("FontRole", role)
+            end
+            inst.Font = State.Fonts.Resolve(role)
+        end
+    end
+end
+
+State.Fonts.Apply = State.Fonts.Apply or function()
+    State.Fonts.ApplyToRoot(State.ScreenGui)
+    State.Fonts.ApplyToRoot(State.AutoBuyLogGui)
+    State.Fonts.ApplyToRoot(State.FullAutomationLogGui)
 end
 
 -- =====================================================
@@ -704,6 +870,25 @@ trackConnection(RunService.RenderStepped:Connect(function()
             LoadingUI.Scale.Scale = newScale
         end
     end
+    if State.Layout then
+        local cam = workspace.CurrentCamera
+        if cam then
+            local vp = cam.ViewportSize
+            local last = State.Layout.LastViewport
+            if vp and (not last or last.X ~= vp.X or last.Y ~= vp.Y) then
+                State.Layout.LastViewport = Vector2.new(vp.X, vp.Y)
+                if State.MainLayout and State.MainLayout.Apply then
+                    State.MainLayout.Apply()
+                end
+                if State.LogLayout and State.LogLayout.Apply then
+                    State.LogLayout.Apply()
+                end
+                if State.Notify and State.Notify.UpdateLayout then
+                    State.Notify.UpdateLayout()
+                end
+            end
+        end
+    end
 end))
 
 local TitleBar = Instance.new("TextLabel")
@@ -724,9 +909,10 @@ VersionLabel.BackgroundTransparency = 1
 VersionLabel.Font = Enum.Font.Gotham
 VersionLabel.TextSize = 12
 VersionLabel.TextXAlignment = Enum.TextXAlignment.Right
-VersionLabel.Text = "V1.0.0"
+VersionLabel.Text = State.Version
 VersionLabel.Parent = Main
 registerTheme(VersionLabel, "TextColor3", "Muted")
+State.ValidateVersion(VersionLabel.Text)
 
 local AccentLine = Instance.new("Frame")
 AccentLine.Size = UDim2.new(1, 0, 0, 2)
@@ -770,11 +956,33 @@ MinimizedIcon.Active = true
 MinimizedIcon.Visible = false
 MinimizedIcon.Parent = Main
 registerTheme(MinimizedIcon, "BackgroundColor3", "Panel")
-MinimizedIcon.Image = resolveMinimizeIcon()
+MinimizedIcon.Image = ""
 MinimizedIcon.ScaleType = Enum.ScaleType.Fit
 MinimizedIcon.ImageTransparency = 0
 addCorner(MinimizedIcon, 10)
-addStroke(MinimizedIcon, "Muted", 1, 0.6)
+addStroke(MinimizedIcon, "Accent", 2, 0.2)
+
+State.MinimizedShadow = Instance.new("Frame")
+State.MinimizedShadow.Size = UDim2.new(1, 8, 1, 8)
+State.MinimizedShadow.Position = UDim2.new(0, -4, 0, -4)
+State.MinimizedShadow.BorderSizePixel = 0
+State.MinimizedShadow.BackgroundTransparency = 0.55
+State.MinimizedShadow.Active = false
+State.MinimizedShadow.Visible = false
+State.MinimizedShadow.ZIndex = 0
+State.MinimizedShadow.Parent = Main
+registerTheme(State.MinimizedShadow, "BackgroundColor3", "Main")
+addCorner(State.MinimizedShadow, 12)
+
+State.MinimizedIconImage = Instance.new("ImageLabel")
+State.MinimizedIconImage.Size = UDim2.new(0.7, 0, 0.7, 0)
+State.MinimizedIconImage.Position = UDim2.new(0.5, 0, 0.5, 0)
+State.MinimizedIconImage.AnchorPoint = Vector2.new(0.5, 0.5)
+State.MinimizedIconImage.BackgroundTransparency = 1
+State.MinimizedIconImage.BorderSizePixel = 0
+State.MinimizedIconImage.Image = resolveMinimizeIcon()
+State.MinimizedIconImage.ScaleType = Enum.ScaleType.Fit
+State.MinimizedIconImage.Parent = MinimizedIcon
 
 local Minimized = false
 local Dragging = false
@@ -799,6 +1007,9 @@ trackConnection(TitleBar.InputBegan:Connect(function(input)
         input.Changed:Connect(function()
             if input.UserInputState == Enum.UserInputState.End then
                 Dragging = false
+                if State.Layout and State.Layout.SaveRelative then
+                    State.Layout.SaveRelative(Main, State.MainLayout)
+                end
             end
         end)
     end
@@ -816,6 +1027,9 @@ trackConnection(MinimizedIcon.InputBegan:Connect(function(input)
         input.Changed:Connect(function()
             if input.UserInputState == Enum.UserInputState.End then
                 Dragging = false
+                if State.Layout and State.Layout.SaveRelative then
+                    State.Layout.SaveRelative(Main, State.MainLayout)
+                end
             end
         end)
     end
@@ -865,6 +1079,26 @@ createResizeHandle("ResizeTopLeft", UDim2.new(0, 12, 0, 12), UDim2.new(0, 0, 0, 
 
 local SavedSize = Main.Size
 local SavedPos = Main.Position
+State.MainLayout = State.MainLayout or {}
+State.MainLayout.Apply = State.MainLayout.Apply or function()
+    if not Main or not Main.Parent then
+        return
+    end
+    if State.Layout and State.Layout.ApplyRelative then
+        State.Layout.ApplyRelative(Main, State.MainLayout)
+    else
+        State.MainLayout.RelativePos = nil
+    end
+    if State.Layout and State.Layout.ClampFrame then
+        State.Layout.ClampFrame(Main, 8, 8)
+    end
+    if not Minimized then
+        SavedPos = Main.Position
+        if State.Layout and State.Layout.SaveRelative then
+            State.Layout.SaveRelative(Main, State.MainLayout)
+        end
+    end
+end
 local function setMinimized(state)
     Minimized = state
     if Minimized then
@@ -876,6 +1110,7 @@ local function setMinimized(state)
         Main.Position = SavedPos
         Body.Visible = false
         TitleBar.Visible = false
+        VersionLabel.Visible = false
         AccentLine.Visible = false
         MinimizeBtn.Visible = false
         CloseBtn.Visible = false
@@ -885,10 +1120,17 @@ local function setMinimized(state)
         end
         Main.Size = UDim2.new(0, MINIMIZED_ICON_SIZE, 0, MINIMIZED_ICON_SIZE)
         MinimizedIcon.Visible = true
+        if State.MinimizedShadow then
+            State.MinimizedShadow.Visible = true
+        end
         MinimizeBtn.Text = "+"
+        if State.MainLayout and State.MainLayout.Apply then
+            State.MainLayout.Apply()
+        end
     else
         Body.Visible = true
         TitleBar.Visible = true
+        VersionLabel.Visible = true
         AccentLine.Visible = true
         MinimizeBtn.Visible = true
         CloseBtn.Visible = true
@@ -900,7 +1142,13 @@ local function setMinimized(state)
         Main.Position = SavedPos
         Main.Size = SavedSize
         MinimizedIcon.Visible = false
+        if State.MinimizedShadow then
+            State.MinimizedShadow.Visible = false
+        end
         MinimizeBtn.Text = "-"
+        if State.MainLayout and State.MainLayout.Apply then
+            State.MainLayout.Apply()
+        end
     end
 end
 
@@ -981,12 +1229,18 @@ local function updateResize(input)
 end
 
 local function endResize()
+    if not Resizing then
+        return
+    end
     Resizing = false
     ResizeDir = nil
-    if Main and Main.Size then
+    if not Minimized and Main and Main.Size then
         Config.WindowWidth = Main.Size.X.Offset
         Config.WindowHeight = Main.Size.Y.Offset
         saveConfig()
+    end
+    if State.Layout and State.Layout.SaveRelative then
+        State.Layout.SaveRelative(Main, State.MainLayout)
     end
 end
 
@@ -1166,7 +1420,7 @@ local function createSubSection(parent, title)
     return label
 end
 
-local function createSectionBox(parent, title)
+local function createSectionBox(parent, title, key)
     local container = Instance.new("Frame")
     container.Size = UDim2.new(1, 0, 0, 0)
     container.AutomaticSize = Enum.AutomaticSize.Y
@@ -1177,21 +1431,48 @@ local function createSectionBox(parent, title)
     addStroke(container, "Muted", 1, 0.8)
 
     local pad = Instance.new("UIPadding")
-    pad.PaddingTop = UDim.new(0, 10)
+    pad.PaddingTop = UDim.new(0, 8)
     pad.PaddingBottom = UDim.new(0, 10)
     pad.PaddingLeft = UDim.new(0, 12)
     pad.PaddingRight = UDim.new(0, 12)
     pad.Parent = container
 
+    local header = Instance.new("Frame")
+    header.Size = UDim2.new(1, 0, 0, 22)
+    header.BorderSizePixel = 0
+    header.BackgroundTransparency = 1
+    header.Parent = container
+
     local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(1, 0, 0, 22)
+    label.Size = UDim2.new(1, -24, 1, 0)
     label.BackgroundTransparency = 1
     label.Font = Enum.Font.GothamSemibold
     label.TextSize = 13
     label.Text = title
     label.TextXAlignment = Enum.TextXAlignment.Left
-    label.Parent = container
+    label.Parent = header
     registerTheme(label, "TextColor3", "Text")
+
+    local headerBtn = Instance.new("TextButton")
+    headerBtn.Size = UDim2.new(1, -24, 1, 0)
+    headerBtn.Position = UDim2.new(0, 0, 0, 0)
+    headerBtn.BorderSizePixel = 0
+    headerBtn.BackgroundTransparency = 1
+    headerBtn.Text = ""
+    headerBtn.AutoButtonColor = false
+    headerBtn.Parent = header
+
+    local toggleBtn = Instance.new("TextButton")
+    toggleBtn.Size = UDim2.new(0, 20, 0, 20)
+    toggleBtn.Position = UDim2.new(1, -20, 0, 1)
+    toggleBtn.BorderSizePixel = 0
+    toggleBtn.BackgroundTransparency = 1
+    toggleBtn.Font = Enum.Font.GothamSemibold
+    toggleBtn.TextSize = 12
+    toggleBtn.Text = "v"
+    toggleBtn.AutoButtonColor = false
+    toggleBtn.Parent = header
+    registerTheme(toggleBtn, "TextColor3", "Muted")
 
     local divider = Instance.new("Frame")
     divider.Size = UDim2.new(1, 0, 0, 1)
@@ -1214,6 +1495,44 @@ local function createSectionBox(parent, title)
     list.Padding = UDim.new(0, 8)
     list.SortOrder = Enum.SortOrder.LayoutOrder
     list.Parent = content
+
+    local stateKey
+    if type(key) == "string" and #key > 0 then
+        stateKey = key
+    else
+        local parentName = parent and parent.Name or "Page"
+        stateKey = parentName .. "::" .. tostring(title)
+    end
+
+    local expanded = true
+    if Config.SectionStates[stateKey] ~= nil then
+        expanded = Config.SectionStates[stateKey] == true
+    else
+        Config.SectionStates[stateKey] = expanded
+        saveConfig()
+    end
+
+    local function applyExpanded()
+        content.Visible = expanded
+        toggleBtn.Text = expanded and "v" or ">"
+    end
+
+    local function setExpanded(v)
+        expanded = v == true
+        Config.SectionStates[stateKey] = expanded
+        saveConfig()
+        applyExpanded()
+    end
+
+    toggleBtn.MouseButton1Click:Connect(function()
+        setExpanded(not expanded)
+    end)
+
+    headerBtn.MouseButton1Click:Connect(function()
+        setExpanded(not expanded)
+    end)
+
+    applyExpanded()
 
     return content
 end
@@ -1282,7 +1601,7 @@ local function createParagraph(parent, title, content)
     pad.Parent = frame
 
     local t = Instance.new("TextLabel")
-    t.Size = UDim2.new(1, 0, 0, 18)
+    t.Size = UDim2.new(1, -24, 0, 18)
     t.BackgroundTransparency = 1
     t.Font = Enum.Font.GothamSemibold
     t.TextSize = 12
@@ -1348,10 +1667,18 @@ local function createInput(parent, text, flag, currentValue, callback)
     box.TextSize = 12
     box.TextXAlignment = Enum.TextXAlignment.Left
     box.Text = value
+    box.ClipsDescendants = true
     box.Parent = frame
     registerTheme(box, "BackgroundColor3", "Panel")
     registerTheme(box, "TextColor3", "Text")
     addCorner(box, 6)
+
+    local boxPad = Instance.new("UIPadding")
+    boxPad.PaddingLeft = UDim.new(0, 6)
+    boxPad.PaddingRight = UDim.new(0, 6)
+    boxPad.PaddingTop = UDim.new(0, 2)
+    boxPad.PaddingBottom = UDim.new(0, 2)
+    boxPad.Parent = box
 
     local disabled = false
 
@@ -1669,6 +1996,1344 @@ local function createSlider(parent, text, flag, rangeMin, rangeMax, currentValue
     }
 end
 
+-- =====================================================
+-- AUTO BUY LOG UI (SEPARATE WINDOW)
+-- =====================================================
+local AutoBuyLogState = {
+    Enabled = false,
+    ActiveGroups = {},
+    GroupData = {},
+    GroupUI = {},
+    ActiveItem = {},
+    LastActive = {},
+    ScreenGui = nil,
+    Frame = nil,
+    Content = nil,
+    CountLabel = nil,
+    CloseBtn = nil,
+    ToggleControl = nil,
+    Dragging = false,
+    DragStart = nil,
+    StartPos = nil,
+    UserMoved = false,
+    LastPosition = nil
+}
+
+State.Layout = State.Layout or {}
+State.Layout.GetViewport = State.Layout.GetViewport or function()
+    local cam = workspace.CurrentCamera
+    if cam then
+        return cam.ViewportSize
+    end
+    return Vector2.new(0, 0)
+end
+
+State.Layout.GetInset = State.Layout.GetInset or function()
+    local inset = Vector2.new(0, 0)
+    pcall(function()
+        local gs = game:GetService("GuiService")
+        local v = gs:GetGuiInset()
+        if typeof(v) == "Vector2" then
+            inset = v
+        end
+    end)
+    return inset
+end
+
+State.Layout.GetScale = State.Layout.GetScale or function()
+    local vp = State.Layout.GetViewport and State.Layout.GetViewport() or Vector2.new(0, 0)
+    if vp.X <= 0 or vp.Y <= 0 then
+        return 1
+    end
+    local baseW, baseH = 1280, 720
+    local scale = math.min(vp.X / baseW, vp.Y / baseH)
+    return math.clamp(scale, 0.65, 1.15)
+end
+
+State.Layout.ApplyScale = State.Layout.ApplyScale or function(frame)
+    if not frame then
+        return
+    end
+    local scale = State.Layout.GetScale and State.Layout.GetScale() or 1
+    local uiScale = frame:FindFirstChild("UIScale")
+    if not uiScale then
+        uiScale = Instance.new("UIScale")
+        uiScale.Name = "UIScale"
+        uiScale.Parent = frame
+    end
+    uiScale.Scale = scale
+end
+
+State.Layout.SaveRelative = State.Layout.SaveRelative or function(frame, stateTable)
+    if not frame or not frame.Parent or not stateTable then
+        return
+    end
+    local vp = State.Layout.GetViewport and State.Layout.GetViewport() or Vector2.new(0, 0)
+    if vp.X <= 0 or vp.Y <= 0 then
+        return
+    end
+    local absPos = frame.AbsolutePosition or Vector2.new(0, 0)
+    local absSize = frame.AbsoluteSize or Vector2.new(0, 0)
+    local anchor = frame.AnchorPoint or Vector2.new(0, 0)
+    local anchorPos = Vector2.new(
+        absPos.X + absSize.X * anchor.X,
+        absPos.Y + absSize.Y * anchor.Y
+    )
+    local sx = math.clamp(anchorPos.X / vp.X, 0, 1)
+    local sy = math.clamp(anchorPos.Y / vp.Y, 0, 1)
+    stateTable.RelativePos = Vector2.new(sx, sy)
+end
+
+State.Layout.ApplyRelative = State.Layout.ApplyRelative or function(frame, stateTable)
+    if not frame or not stateTable then
+        return
+    end
+    local rel = stateTable.RelativePos
+    if not rel then
+        return
+    end
+    frame.Position = UDim2.new(rel.X, 0, rel.Y, 0)
+end
+
+State.Layout.ClampFrame = State.Layout.ClampFrame or function(frame, marginX, marginY)
+    if not frame or not frame.Parent then
+        return
+    end
+    local viewport = State.Layout.GetViewport and State.Layout.GetViewport() or Vector2.new(0, 0)
+    if viewport.X <= 0 or viewport.Y <= 0 then
+        return
+    end
+    local inset = State.Layout.GetInset and State.Layout.GetInset() or Vector2.new(0, 0)
+    local absSize = frame.AbsoluteSize
+    local w = (absSize and absSize.X and absSize.X > 0) and absSize.X or (frame.Size.X.Offset or 0)
+    local h = (absSize and absSize.Y and absSize.Y > 0) and absSize.Y or (frame.Size.Y.Offset or 0)
+    local absPos = frame.AbsolutePosition or Vector2.new(0, 0)
+    local x = absPos.X or 0
+    local y = absPos.Y or 0
+    local mx = marginX or 0
+    local my = marginY or 0
+    local minX = inset.X + mx
+    local minY = inset.Y + my
+    local maxX = viewport.X - mx - w
+    local maxY = viewport.Y - my - h
+    if maxX < minX then
+        maxX = minX
+    end
+    if maxY < minY then
+        maxY = minY
+    end
+    local newX = math.clamp(x, minX, maxX)
+    local newY = math.clamp(y, minY, maxY)
+    local anchor = frame.AnchorPoint or Vector2.new(0, 0)
+    frame.Position = UDim2.new(0, newX + w * anchor.X, 0, newY + h * anchor.Y)
+end
+
+State.LogLayout = State.LogLayout or {}
+State.LogLayout.Width = State.LogLayout.Width or 280
+State.LogLayout.MarginX = State.LogLayout.MarginX or 12
+State.LogLayout.MarginY = State.LogLayout.MarginY or State.LogLayout.MarginX
+State.LogLayout.Gap = State.LogLayout.Gap or 8
+
+State.LogLayout.GetViewport = State.LogLayout.GetViewport or function()
+    if State.Layout and State.Layout.GetViewport then
+        return State.Layout.GetViewport()
+    end
+    return Vector2.new(0, 0)
+end
+
+State.LogLayout.Apply = State.LogLayout.Apply or function()
+    local auto = AutoBuyLogState
+    local full = State.FullAutomationLog
+    if not auto and not full then
+        return
+    end
+
+    local viewport = State.LogLayout.GetViewport and State.LogLayout.GetViewport() or Vector2.new(0, 0)
+    if viewport.X <= 0 or viewport.Y <= 0 then
+        return
+    end
+
+    local inset = (State.Layout and State.Layout.GetInset and State.Layout.GetInset()) or Vector2.new(0, 0)
+
+    local usableWidth = math.max(0, viewport.X - inset.X)
+    local usableHeight = math.max(0, viewport.Y - inset.Y)
+
+    local width = State.LogLayout.Width or 280
+    local marginX = State.LogLayout.MarginX or State.LogLayout.Margin or 12
+    local marginY = State.LogLayout.MarginY or State.LogLayout.Margin or 12
+    local gap = State.LogLayout.Gap or 8
+    local scale = (State.Layout and State.Layout.GetScale and State.Layout.GetScale()) or 1
+
+    local autoFrame = auto and auto.Frame or nil
+    local fullFrame = full and full.Frame or nil
+
+    if autoFrame then
+        autoFrame.Size = UDim2.new(0, width, autoFrame.Size.Y.Scale, autoFrame.Size.Y.Offset)
+    end
+    if fullFrame then
+        fullFrame.Size = UDim2.new(0, width, fullFrame.Size.Y.Scale, fullFrame.Size.Y.Offset)
+    end
+    if State.Layout and State.Layout.ApplyScale then
+        if autoFrame then
+            State.Layout.ApplyScale(autoFrame)
+        end
+        if fullFrame then
+            State.Layout.ApplyScale(fullFrame)
+        end
+    end
+
+    local autoVisible = autoFrame and autoFrame.Visible
+    local fullVisible = fullFrame and fullFrame.Visible
+    if not autoVisible and not fullVisible then
+        return
+    end
+
+    local baseX = math.max(marginX, usableWidth - (width * scale) - marginX)
+
+    local function getHeight(frame)
+        if not frame then
+            return 0
+        end
+        local abs = frame.AbsoluteSize.Y
+        if abs and abs > 0 then
+            return abs
+        end
+        return frame.Size.Y.Offset or 0
+    end
+
+    if autoVisible and fullVisible then
+        if not auto.UserMoved and not full.UserMoved then
+            local autoH = getHeight(autoFrame)
+            local fullH = getHeight(fullFrame)
+            autoFrame.Position = UDim2.new(0, baseX, 0, usableHeight - autoH - marginY)
+            fullFrame.Position = UDim2.new(0, baseX, 0, usableHeight - autoH - marginY - gap - fullH)
+        elseif autoVisible and auto.UserMoved and State.Layout and State.Layout.ApplyRelative and auto.RelativePos then
+            State.Layout.ApplyRelative(autoFrame, auto)
+        elseif autoVisible and not auto.UserMoved then
+            local autoH = getHeight(autoFrame)
+            autoFrame.Position = UDim2.new(0, baseX, 0, usableHeight - autoH - marginY)
+        elseif fullVisible and full.UserMoved and State.Layout and State.Layout.ApplyRelative and full.RelativePos then
+            State.Layout.ApplyRelative(fullFrame, full)
+        elseif fullVisible and not full.UserMoved then
+            local fullH = getHeight(fullFrame)
+            fullFrame.Position = UDim2.new(0, baseX, 0, usableHeight - fullH - marginY)
+        end
+    else
+        local targetFrame = autoVisible and autoFrame or fullFrame
+        local state = autoVisible and auto or full
+        if targetFrame and state and state.UserMoved and State.Layout and State.Layout.ApplyRelative and state.RelativePos then
+            State.Layout.ApplyRelative(targetFrame, state)
+        elseif targetFrame and state and not state.UserMoved then
+            local h = getHeight(targetFrame)
+            targetFrame.Position = UDim2.new(0, baseX, 0, usableHeight - h - marginY)
+        end
+    end
+
+    if State.Layout and State.Layout.ClampFrame then
+        if autoFrame and auto.UserMoved then
+            State.Layout.ClampFrame(autoFrame, marginX, marginY)
+        end
+        if fullFrame and full.UserMoved then
+            State.Layout.ClampFrame(fullFrame, marginX, marginY)
+        end
+    end
+end
+
+local function getActiveAutoBuyCount()
+    local n = 0
+    for _ in pairs(AutoBuyLogState.ActiveGroups) do
+        n += 1
+    end
+    return n
+end
+
+local function destroyAutoBuyLogUI()
+    if AutoBuyLogState.ScreenGui and AutoBuyLogState.ScreenGui.Parent then
+        AutoBuyLogState.ScreenGui:Destroy()
+    end
+    AutoBuyLogState.ScreenGui = nil
+    AutoBuyLogState.Frame = nil
+    AutoBuyLogState.Content = nil
+    AutoBuyLogState.CountLabel = nil
+    AutoBuyLogState.CloseBtn = nil
+    AutoBuyLogState.GroupUI = {}
+    AutoBuyLogState.LastActive = {}
+    AutoBuyLogState.UserMoved = false
+    AutoBuyLogState.LastPosition = nil
+    if State.LogLayout and State.LogLayout.Apply then
+        State.LogLayout.Apply()
+    end
+end
+
+local function setAutoBuyLogToggle(value)
+    Config.AutoBuyLogEnabled = value == true
+    saveConfig()
+    if AutoBuyLogState.ToggleControl and AutoBuyLogState.ToggleControl.Set then
+        AutoBuyLogState.ToggleControl:Set(Config.AutoBuyLogEnabled)
+    end
+end
+
+local function createAutoBuyLogUI()
+    if AutoBuyLogState.ScreenGui and AutoBuyLogState.Frame then
+        return
+    end
+
+    local logGui = Instance.new("ScreenGui")
+    logGui.Name = "GardenIncrementalAutoBuyLog"
+    logGui.ResetOnSpawn = false
+    if gethui then
+        logGui.Parent = gethui()
+    elseif syn and syn.protect_gui then
+        syn.protect_gui(logGui)
+        logGui.Parent = game:GetService("CoreGui")
+    else
+        logGui.Parent = game:GetService("CoreGui")
+    end
+
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(0, 280, 0, 220)
+    frame.AnchorPoint = Vector2.new(0, 0)
+    frame.Position = UDim2.new(0, 40, 0, 40)
+    frame.BorderSizePixel = 0
+    frame.Parent = logGui
+    registerTheme(frame, "BackgroundColor3", "Main")
+    addCorner(frame, 10)
+    addStroke(frame, "Muted", 1, 0.6)
+    addGradient(frame, 90, 0, 0.15)
+    if State.Layout and State.Layout.ApplyScale then
+        State.Layout.ApplyScale(frame)
+    end
+
+    local titleBar = Instance.new("TextLabel")
+    titleBar.Size = UDim2.new(1, -60, 0, 26)
+    titleBar.Position = UDim2.new(0, 10, 0, 0)
+    titleBar.BackgroundTransparency = 1
+    titleBar.Font = Enum.Font.GothamSemibold
+    titleBar.TextSize = 13
+    titleBar.TextXAlignment = Enum.TextXAlignment.Left
+    titleBar.Text = "Auto Buy Log"
+    titleBar.Parent = frame
+    registerTheme(titleBar, "TextColor3", "Text")
+
+    local countLabel = Instance.new("TextLabel")
+    countLabel.Size = UDim2.new(0, 40, 0, 18)
+    countLabel.Position = UDim2.new(1, -100, 0, 4)
+    countLabel.BackgroundTransparency = 1
+    countLabel.Font = Enum.Font.Gotham
+    countLabel.TextSize = 12
+    countLabel.TextXAlignment = Enum.TextXAlignment.Right
+    countLabel.Text = "0"
+    countLabel.Parent = frame
+    registerTheme(countLabel, "TextColor3", "Muted")
+
+    local closeBtn = Instance.new("TextButton")
+    closeBtn.Size = UDim2.new(0, 24, 0, 20)
+    closeBtn.Position = UDim2.new(1, -30, 0, 3)
+    closeBtn.BorderSizePixel = 0
+    closeBtn.Text = "x"
+    closeBtn.AutoButtonColor = false
+    closeBtn.Font = Enum.Font.GothamSemibold
+    closeBtn.TextSize = 12
+    closeBtn.Parent = frame
+    registerTheme(closeBtn, "BackgroundColor3", "Panel")
+    registerTheme(closeBtn, "TextColor3", "Text")
+    addCorner(closeBtn, 4)
+
+    local line = Instance.new("Frame")
+    line.Size = UDim2.new(1, 0, 0, 2)
+    line.Position = UDim2.new(0, 0, 0, 26)
+    line.BorderSizePixel = 0
+    line.Parent = frame
+    registerTheme(line, "BackgroundColor3", "Accent")
+
+    local content = Instance.new("ScrollingFrame")
+    content.Size = UDim2.new(1, -16, 1, -36)
+    content.Position = UDim2.new(0, 8, 0, 32)
+    content.BorderSizePixel = 0
+    content.BackgroundTransparency = 1
+    content.ScrollBarThickness = 4
+    content.ScrollingDirection = Enum.ScrollingDirection.Y
+    content.CanvasSize = UDim2.new(0, 0, 0, 0)
+    content.Parent = frame
+
+    local list = Instance.new("UIListLayout")
+    list.Padding = UDim.new(0, 6)
+    list.SortOrder = Enum.SortOrder.LayoutOrder
+    list.Parent = content
+
+    local pad = Instance.new("UIPadding")
+    pad.PaddingTop = UDim.new(0, 4)
+    pad.PaddingBottom = UDim.new(0, 4)
+    pad.PaddingLeft = UDim.new(0, 2)
+    pad.PaddingRight = UDim.new(0, 2)
+    pad.Parent = content
+
+    list:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+        content.CanvasSize = UDim2.new(0, 0, 0, list.AbsoluteContentSize.Y + 8)
+    end)
+
+    closeBtn.MouseButton1Click:Connect(function()
+        setAutoBuyLogToggle(false)
+        destroyAutoBuyLogUI()
+    end)
+
+    local function beginDrag(input)
+        AutoBuyLogState.Dragging = true
+        AutoBuyLogState.DragStart = input.Position
+        AutoBuyLogState.StartPos = frame.Position
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                AutoBuyLogState.Dragging = false
+                if State.Layout and State.Layout.SaveRelative then
+                    State.Layout.SaveRelative(frame, AutoBuyLogState)
+                end
+            end
+        end)
+    end
+
+    titleBar.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            beginDrag(input)
+        end
+    end)
+
+    UIS.InputChanged:Connect(function(input)
+        if AutoBuyLogState.Dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+            local delta = input.Position - AutoBuyLogState.DragStart
+            if delta.X ~= 0 or delta.Y ~= 0 then
+                AutoBuyLogState.UserMoved = true
+            end
+            frame.Position = UDim2.new(
+                AutoBuyLogState.StartPos.X.Scale,
+                AutoBuyLogState.StartPos.X.Offset + delta.X,
+                AutoBuyLogState.StartPos.Y.Scale,
+                AutoBuyLogState.StartPos.Y.Offset + delta.Y
+            )
+            AutoBuyLogState.LastPosition = frame.Position
+        end
+    end)
+
+    AutoBuyLogState.ScreenGui = logGui
+    AutoBuyLogState.Frame = frame
+    AutoBuyLogState.Content = content
+    AutoBuyLogState.CountLabel = countLabel
+    AutoBuyLogState.CloseBtn = closeBtn
+    State.AutoBuyLogGui = logGui
+
+    task.delay(0, function()
+        if State.LogLayout and State.LogLayout.Apply then
+            State.LogLayout.Apply()
+        end
+    end)
+end
+
+local function rebuildAutoBuyLogContent()
+    if not AutoBuyLogState.Content then
+        return
+    end
+    for _, child in ipairs(AutoBuyLogState.Content:GetChildren()) do
+        if child:IsA("Frame") or child:IsA("TextLabel") then
+            child:Destroy()
+        end
+    end
+
+    local groups = {}
+    for _, info in pairs(AutoBuyLogState.ActiveGroups) do
+        groups[#groups + 1] = info
+    end
+    table.sort(groups, function(a, b)
+        return tostring(a.Name) < tostring(b.Name)
+    end)
+
+    AutoBuyLogState.GroupUI = {}
+    AutoBuyLogState.LastActive = {}
+
+    for i, info in ipairs(groups) do
+        local groupKey = info.Key
+        local data = AutoBuyLogState.GroupData[groupKey] or {}
+        local shops = data.Shops or {}
+        local shopEnabled = data.ShopEnabled or {}
+        local itemEnabled = data.ItemEnabled or {}
+
+        local section = Instance.new("Frame")
+        section.Size = UDim2.new(1, 0, 0, 150)
+        section.BorderSizePixel = 0
+        section.Parent = AutoBuyLogState.Content
+        registerTheme(section, "BackgroundColor3", "Panel")
+        addCorner(section, 8)
+        addStroke(section, "Muted", 1, 0.8)
+
+        local header = Instance.new("TextLabel")
+        header.Size = UDim2.new(1, -10, 0, 22)
+        header.Position = UDim2.new(0, 8, 0, 4)
+        header.BackgroundTransparency = 1
+        header.Font = Enum.Font.GothamSemibold
+        header.TextSize = 12
+        header.TextXAlignment = Enum.TextXAlignment.Left
+        local headerText = tostring(info.Name or "AutoBuy")
+        if info.Name == "Auto Buy Shop" and info.Key then
+            headerText = headerText .. " (" .. tostring(info.Key) .. ")"
+        end
+        header.Text = headerText
+        header.Parent = section
+        registerTheme(header, "TextColor3", "Text")
+
+        local scroll = Instance.new("ScrollingFrame")
+        scroll.Size = UDim2.new(1, -12, 1, -30)
+        scroll.Position = UDim2.new(0, 6, 0, 28)
+        scroll.BorderSizePixel = 0
+        scroll.BackgroundTransparency = 1
+        scroll.ScrollBarThickness = 4
+        scroll.ScrollingDirection = Enum.ScrollingDirection.Y
+        scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+        scroll.Parent = section
+
+        local list = Instance.new("UIListLayout")
+        list.Padding = UDim.new(0, 4)
+        list.SortOrder = Enum.SortOrder.LayoutOrder
+        list.Parent = scroll
+
+        local pad = Instance.new("UIPadding")
+        pad.PaddingTop = UDim.new(0, 2)
+        pad.PaddingBottom = UDim.new(0, 4)
+        pad.PaddingLeft = UDim.new(0, 2)
+        pad.PaddingRight = UDim.new(0, 2)
+        pad.Parent = scroll
+
+        list:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+            scroll.CanvasSize = UDim2.new(0, 0, 0, list.AbsoluteContentSize.Y + 6)
+        end)
+
+        AutoBuyLogState.GroupUI[groupKey] = {
+            Frame = section,
+            Scroll = scroll,
+            Rows = {}
+        }
+
+        local addedAny = false
+        for _, shop in ipairs(shops) do
+            local shopKey = shop.Key
+            if shopEnabled[shopKey] then
+                local shopLabel = Instance.new("TextLabel")
+                shopLabel.Size = UDim2.new(1, 0, 0, 20)
+                shopLabel.BackgroundTransparency = 1
+                shopLabel.Font = Enum.Font.GothamSemibold
+                shopLabel.TextSize = 11
+                shopLabel.TextXAlignment = Enum.TextXAlignment.Left
+                shopLabel.Text = tostring(shop.DisplayName or shopKey or "Shop")
+                shopLabel.Parent = scroll
+                registerTheme(shopLabel, "TextColor3", "Muted")
+
+                AutoBuyLogState.GroupUI[groupKey].Rows[shopKey] = AutoBuyLogState.GroupUI[groupKey].Rows[shopKey] or {}
+
+                for _, item in ipairs(shop.Items or {}) do
+                    if itemEnabled[shopKey] and itemEnabled[shopKey][item] then
+                        local row = Instance.new("Frame")
+                        row.Size = UDim2.new(1, 0, 0, 22)
+                        row.BorderSizePixel = 0
+                        row.Parent = scroll
+                        registerTheme(row, "BackgroundColor3", "Main")
+                        addCorner(row, 6)
+                        addStroke(row, "Muted", 1, 0.6)
+
+                        local indicator = Instance.new("Frame")
+                        indicator.Size = UDim2.new(0, 6, 1, -6)
+                        indicator.Position = UDim2.new(0, 4, 0, 3)
+                        indicator.BorderSizePixel = 0
+                        indicator.Visible = false
+                        indicator.Parent = row
+                        registerTheme(indicator, "BackgroundColor3", "Accent")
+                        addCorner(indicator, 3)
+
+                        local label = Instance.new("TextLabel")
+                        label.Size = UDim2.new(1, -16, 1, 0)
+                        label.Position = UDim2.new(0, 14, 0, 0)
+                        label.BackgroundTransparency = 1
+                        label.Font = Enum.Font.Gotham
+                        label.TextSize = 11
+                        label.TextXAlignment = Enum.TextXAlignment.Left
+                        label.Text = tostring(item)
+                        label.Parent = row
+                        registerTheme(label, "TextColor3", "Text")
+
+                        AutoBuyLogState.GroupUI[groupKey].Rows[shopKey][item] = {
+                            Row = row,
+                            Indicator = indicator,
+                            Label = label
+                        }
+                        addedAny = true
+                    end
+                end
+            end
+        end
+
+        if not addedAny then
+            local empty = Instance.new("TextLabel")
+            empty.Size = UDim2.new(1, 0, 0, 20)
+            empty.BackgroundTransparency = 1
+            empty.Font = Enum.Font.Gotham
+            empty.TextSize = 11
+            empty.TextXAlignment = Enum.TextXAlignment.Left
+            empty.Text = "Tidak ada item aktif"
+            empty.Parent = scroll
+            registerTheme(empty, "TextColor3", "Muted")
+        end
+
+        if i < #groups then
+            local div = Instance.new("Frame")
+            div.Size = UDim2.new(1, 0, 0, 1)
+            div.BorderSizePixel = 0
+            div.Parent = AutoBuyLogState.Content
+            registerTheme(div, "BackgroundColor3", "Muted")
+        end
+    end
+
+    for _, info in ipairs(groups) do
+        if AutoBuyLogState.UpdateGroupActiveIndicator then
+            AutoBuyLogState.UpdateGroupActiveIndicator(info.Key)
+        end
+    end
+end
+
+local function updateAutoBuyLogUI()
+    local activeCount = getActiveAutoBuyCount()
+    if not Config.AutoBuyLogEnabled or activeCount == 0 then
+        if AutoBuyLogState.Frame then
+            AutoBuyLogState.Frame.Visible = false
+        end
+        AutoBuyLogState.UserMoved = false
+        AutoBuyLogState.LastPosition = nil
+        if State.LogLayout and State.LogLayout.Apply then
+            State.LogLayout.Apply()
+        end
+        return
+    end
+
+    createAutoBuyLogUI()
+    if AutoBuyLogState.Frame then
+        AutoBuyLogState.Frame.Visible = true
+    end
+    if AutoBuyLogState.CountLabel then
+        AutoBuyLogState.CountLabel.Text = tostring(activeCount)
+    end
+    rebuildAutoBuyLogContent()
+    if State.LogLayout and State.LogLayout.Apply then
+        State.LogLayout.Apply()
+    end
+end
+
+local function setAutoBuyGroupActive(groupKey, displayName, enabled, shops, shopEnabled, itemEnabled)
+    if enabled then
+        AutoBuyLogState.ActiveGroups[groupKey] = {Key = groupKey, Name = displayName or groupKey}
+        AutoBuyLogState.GroupData[groupKey] = AutoBuyLogState.GroupData[groupKey] or {}
+        AutoBuyLogState.GroupData[groupKey].Key = groupKey
+        AutoBuyLogState.GroupData[groupKey].Name = displayName or groupKey
+        AutoBuyLogState.GroupData[groupKey].Shops = shops or AutoBuyLogState.GroupData[groupKey].Shops or {}
+        AutoBuyLogState.GroupData[groupKey].ShopEnabled = shopEnabled or AutoBuyLogState.GroupData[groupKey].ShopEnabled or {}
+        AutoBuyLogState.GroupData[groupKey].ItemEnabled = itemEnabled or AutoBuyLogState.GroupData[groupKey].ItemEnabled or {}
+    else
+        AutoBuyLogState.ActiveGroups[groupKey] = nil
+        AutoBuyLogState.ActiveItem[groupKey] = nil
+        AutoBuyLogState.LastActive[groupKey] = nil
+    end
+    updateAutoBuyLogUI()
+end
+
+AutoBuyLogState.UpdateGroupActiveIndicator = function(groupKey)
+    local ui = AutoBuyLogState.GroupUI[groupKey]
+    if not ui or not ui.Rows then
+        return
+    end
+
+    local last = AutoBuyLogState.LastActive[groupKey]
+    if last and ui.Rows[last.Shop] and ui.Rows[last.Shop][last.Item] then
+        local row = ui.Rows[last.Shop][last.Item]
+        if row.Indicator then
+            row.Indicator.Visible = false
+        end
+    end
+
+    local active = AutoBuyLogState.ActiveItem[groupKey]
+    if active and ui.Rows[active.Shop] and ui.Rows[active.Shop][active.Item] then
+        local row = ui.Rows[active.Shop][active.Item]
+        if row.Indicator then
+            row.Indicator.Visible = true
+        end
+    end
+
+    AutoBuyLogState.LastActive[groupKey] = active
+end
+
+AutoBuyLogState.SetActiveItem = function(groupKey, shopKey, itemName)
+    if not groupKey or not shopKey or not itemName then
+        return
+    end
+    AutoBuyLogState.ActiveItem[groupKey] = {Shop = shopKey, Item = itemName}
+    if AutoBuyLogState.UpdateGroupActiveIndicator then
+        AutoBuyLogState.UpdateGroupActiveIndicator(groupKey)
+    end
+end
+
+State.FullAutomationLog = State.FullAutomationLog or {
+    Active = {},
+    ScreenGui = nil,
+    Frame = nil,
+    Content = nil,
+    CountLabel = nil,
+    CloseBtn = nil,
+    ToggleControl = nil,
+    Dragging = false,
+    DragStart = nil,
+    StartPos = nil,
+    UserMoved = false,
+    LastPosition = nil
+}
+
+State.FullAutomationLog.GetActiveCount = function()
+    local n = 0
+    for _ in pairs(State.FullAutomationLog.Active) do
+        n += 1
+    end
+    return n
+end
+
+State.FullAutomationLog.DestroyUI = function()
+    if State.FullAutomationLog.ScreenGui and State.FullAutomationLog.ScreenGui.Parent then
+        State.FullAutomationLog.ScreenGui:Destroy()
+    end
+    State.FullAutomationLog.ScreenGui = nil
+    State.FullAutomationLog.Frame = nil
+    State.FullAutomationLog.Content = nil
+    State.FullAutomationLog.CountLabel = nil
+    State.FullAutomationLog.CloseBtn = nil
+    State.FullAutomationLogGui = nil
+    State.FullAutomationLog.UserMoved = false
+    State.FullAutomationLog.LastPosition = nil
+    if State.LogLayout and State.LogLayout.Apply then
+        State.LogLayout.Apply()
+    end
+end
+
+State.FullAutomationLog.SetToggle = function(value)
+    Config.FullAutomationLogEnabled = value == true
+    saveConfig()
+    if State.FullAutomationLog.ToggleControl and State.FullAutomationLog.ToggleControl.Set then
+        State.FullAutomationLog.ToggleControl:Set(Config.FullAutomationLogEnabled)
+    end
+end
+
+State.FullAutomationLog.CreateUI = function()
+    if State.FullAutomationLog.ScreenGui and State.FullAutomationLog.Frame then
+        return
+    end
+
+    local logGui = Instance.new("ScreenGui")
+    logGui.Name = "GardenIncrementalFullAutomationLog"
+    logGui.ResetOnSpawn = false
+    if gethui then
+        logGui.Parent = gethui()
+    elseif syn and syn.protect_gui then
+        syn.protect_gui(logGui)
+        logGui.Parent = game:GetService("CoreGui")
+    else
+        logGui.Parent = game:GetService("CoreGui")
+    end
+
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(0, 280, 0, 180)
+    frame.AnchorPoint = Vector2.new(0, 0)
+    frame.Position = UDim2.new(0, 40, 0, 300)
+    frame.BorderSizePixel = 0
+    frame.Parent = logGui
+    registerTheme(frame, "BackgroundColor3", "Main")
+    addCorner(frame, 10)
+    addStroke(frame, "Muted", 1, 0.6)
+    addGradient(frame, 90, 0, 0.15)
+    if State.Layout and State.Layout.ApplyScale then
+        State.Layout.ApplyScale(frame)
+    end
+
+    local titleBar = Instance.new("TextLabel")
+    titleBar.Size = UDim2.new(1, -60, 0, 26)
+    titleBar.Position = UDim2.new(0, 10, 0, 0)
+    titleBar.BackgroundTransparency = 1
+    titleBar.Font = Enum.Font.GothamSemibold
+    titleBar.TextSize = 13
+    titleBar.TextXAlignment = Enum.TextXAlignment.Left
+    titleBar.Text = "Full Automation Log"
+    titleBar.Parent = frame
+    registerTheme(titleBar, "TextColor3", "Text")
+
+    local countLabel = Instance.new("TextLabel")
+    countLabel.Size = UDim2.new(0, 40, 0, 18)
+    countLabel.Position = UDim2.new(1, -100, 0, 4)
+    countLabel.BackgroundTransparency = 1
+    countLabel.Font = Enum.Font.Gotham
+    countLabel.TextSize = 12
+    countLabel.TextXAlignment = Enum.TextXAlignment.Right
+    countLabel.Text = "0"
+    countLabel.Parent = frame
+    registerTheme(countLabel, "TextColor3", "Muted")
+
+    local closeBtn = Instance.new("TextButton")
+    closeBtn.Size = UDim2.new(0, 24, 0, 20)
+    closeBtn.Position = UDim2.new(1, -30, 0, 3)
+    closeBtn.BorderSizePixel = 0
+    closeBtn.Text = "x"
+    closeBtn.AutoButtonColor = false
+    closeBtn.Font = Enum.Font.GothamSemibold
+    closeBtn.TextSize = 12
+    closeBtn.Parent = frame
+    registerTheme(closeBtn, "BackgroundColor3", "Panel")
+    registerTheme(closeBtn, "TextColor3", "Text")
+    addCorner(closeBtn, 4)
+
+    local line = Instance.new("Frame")
+    line.Size = UDim2.new(1, 0, 0, 2)
+    line.Position = UDim2.new(0, 0, 0, 26)
+    line.BorderSizePixel = 0
+    line.Parent = frame
+    registerTheme(line, "BackgroundColor3", "Accent")
+
+    local content = Instance.new("ScrollingFrame")
+    content.Size = UDim2.new(1, -16, 1, -36)
+    content.Position = UDim2.new(0, 8, 0, 32)
+    content.BorderSizePixel = 0
+    content.BackgroundTransparency = 1
+    content.ScrollBarThickness = 4
+    content.ScrollingDirection = Enum.ScrollingDirection.Y
+    content.CanvasSize = UDim2.new(0, 0, 0, 0)
+    content.Parent = frame
+
+    local list = Instance.new("UIListLayout")
+    list.Padding = UDim.new(0, 6)
+    list.SortOrder = Enum.SortOrder.LayoutOrder
+    list.Parent = content
+
+    local pad = Instance.new("UIPadding")
+    pad.PaddingTop = UDim.new(0, 4)
+    pad.PaddingBottom = UDim.new(0, 4)
+    pad.PaddingLeft = UDim.new(0, 2)
+    pad.PaddingRight = UDim.new(0, 2)
+    pad.Parent = content
+
+    list:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+        content.CanvasSize = UDim2.new(0, 0, 0, list.AbsoluteContentSize.Y + 8)
+    end)
+
+    closeBtn.MouseButton1Click:Connect(function()
+        State.FullAutomationLog.SetToggle(false)
+        State.FullAutomationLog.DestroyUI()
+    end)
+
+    local function beginDrag(input)
+        State.FullAutomationLog.Dragging = true
+        State.FullAutomationLog.DragStart = input.Position
+        State.FullAutomationLog.StartPos = frame.Position
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                State.FullAutomationLog.Dragging = false
+                if State.Layout and State.Layout.SaveRelative then
+                    State.Layout.SaveRelative(frame, State.FullAutomationLog)
+                end
+            end
+        end)
+    end
+
+    titleBar.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            beginDrag(input)
+        end
+    end)
+
+    UIS.InputChanged:Connect(function(input)
+        if State.FullAutomationLog.Dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+            local delta = input.Position - State.FullAutomationLog.DragStart
+            if delta.X ~= 0 or delta.Y ~= 0 then
+                State.FullAutomationLog.UserMoved = true
+            end
+            frame.Position = UDim2.new(
+                State.FullAutomationLog.StartPos.X.Scale,
+                State.FullAutomationLog.StartPos.X.Offset + delta.X,
+                State.FullAutomationLog.StartPos.Y.Scale,
+                State.FullAutomationLog.StartPos.Y.Offset + delta.Y
+            )
+            State.FullAutomationLog.LastPosition = frame.Position
+        end
+    end)
+
+    State.FullAutomationLog.ScreenGui = logGui
+    State.FullAutomationLog.Frame = frame
+    State.FullAutomationLog.Content = content
+    State.FullAutomationLog.CountLabel = countLabel
+    State.FullAutomationLog.CloseBtn = closeBtn
+    State.FullAutomationLogGui = logGui
+
+    task.delay(0, function()
+        if State.LogLayout and State.LogLayout.Apply then
+            State.LogLayout.Apply()
+        end
+    end)
+end
+
+State.FullAutomationLog.AdjustHeight = function(rowCount)
+    local frame = State.FullAutomationLog.Frame
+    local content = State.FullAutomationLog.Content
+    if not frame or not content then
+        return
+    end
+
+    local total = math.max(1, tonumber(rowCount) or 1)
+    local visible = math.min(total, 5)
+    local rowHeight = 26
+    local rowGap = 6
+    local contentPadding = 8
+    local contentHeight = (rowHeight * visible) + (rowGap * math.max(0, visible - 1)) + contentPadding
+
+    content.Size = UDim2.new(1, -16, 0, contentHeight)
+    frame.Size = UDim2.new(0, (State.LogLayout and State.LogLayout.Width) or frame.Size.X.Offset, 0, contentHeight + 36)
+end
+
+State.FullAutomationLog.RebuildContent = function()
+    if not State.FullAutomationLog.Content then
+        return
+    end
+    for _, child in ipairs(State.FullAutomationLog.Content:GetChildren()) do
+        if child:IsA("Frame") or child:IsA("TextLabel") then
+            child:Destroy()
+        end
+    end
+
+    local list = {}
+    for key, info in pairs(State.FullAutomationLog.Active) do
+        list[#list + 1] = {Key = key, Name = info.Name or key}
+    end
+    table.sort(list, function(a, b)
+        return tostring(a.Name) < tostring(b.Name)
+    end)
+
+    if #list == 0 then
+        local empty = Instance.new("TextLabel")
+        empty.Size = UDim2.new(1, 0, 0, 20)
+        empty.BackgroundTransparency = 1
+        empty.Font = Enum.Font.Gotham
+        empty.TextSize = 12
+        empty.TextXAlignment = Enum.TextXAlignment.Left
+        empty.Text = "Tidak ada Full Automation aktif"
+        empty.Parent = State.FullAutomationLog.Content
+        registerTheme(empty, "TextColor3", "Muted")
+        return
+    end
+
+    for _, info in ipairs(list) do
+        local row = Instance.new("Frame")
+        row.Size = UDim2.new(1, 0, 0, 26)
+        row.BorderSizePixel = 0
+        row.Parent = State.FullAutomationLog.Content
+        registerTheme(row, "BackgroundColor3", "Panel")
+        addCorner(row, 6)
+        addStroke(row, "Muted", 1, 0.8)
+
+        local label = Instance.new("TextLabel")
+        label.Size = UDim2.new(1, -12, 1, 0)
+        label.Position = UDim2.new(0, 6, 0, 0)
+        label.BackgroundTransparency = 1
+        label.Font = Enum.Font.Gotham
+        label.TextSize = 12
+        label.TextXAlignment = Enum.TextXAlignment.Left
+        label.Text = tostring(info.Name)
+        label.Parent = row
+        registerTheme(label, "TextColor3", "Text")
+    end
+
+    if State.FullAutomationLog.AdjustHeight then
+        State.FullAutomationLog.AdjustHeight(#list)
+    end
+    if State.LogLayout and State.LogLayout.Apply then
+        State.LogLayout.Apply()
+    end
+end
+
+State.FullAutomationLog.UpdateUI = function()
+    local activeCount = State.FullAutomationLog.GetActiveCount()
+    if not Config.FullAutomationLogEnabled or activeCount == 0 then
+        if State.FullAutomationLog.Frame then
+            State.FullAutomationLog.Frame.Visible = false
+        end
+        State.FullAutomationLog.UserMoved = false
+        State.FullAutomationLog.LastPosition = nil
+        if State.LogLayout and State.LogLayout.Apply then
+            State.LogLayout.Apply()
+        end
+        return
+    end
+
+    State.FullAutomationLog.CreateUI()
+    if State.FullAutomationLog.Frame then
+        State.FullAutomationLog.Frame.Visible = true
+    end
+    if State.FullAutomationLog.CountLabel then
+        State.FullAutomationLog.CountLabel.Text = tostring(activeCount)
+    end
+    State.FullAutomationLog.RebuildContent()
+    if State.LogLayout and State.LogLayout.Apply then
+        State.LogLayout.Apply()
+    end
+end
+
+State.FullAutomationLog.SetActive = function(key, displayName, enabled)
+    if enabled then
+        State.FullAutomationLog.Active[key] = {Key = key, Name = displayName or key}
+    else
+        State.FullAutomationLog.Active[key] = nil
+    end
+    State.FullAutomationLog.UpdateUI()
+end
+
+local function setupAutoBuyGroup(section, opts)
+    if not opts or type(opts) ~= "table" then
+        return
+    end
+
+    local shops = opts.Shops or {}
+    if #shops == 0 then
+        return
+    end
+
+    local function setControlsEnabled(controls, enabled)
+        for _, ctrl in ipairs(controls) do
+            if ctrl and ctrl.SetEnabled then
+                ctrl:SetEnabled(enabled)
+            end
+        end
+    end
+
+    local function createListDropdownRow(parent, labelText, onToggle)
+        local frame = Instance.new("Frame")
+        frame.Size = UDim2.new(1, 0, 0, 30)
+        frame.BorderSizePixel = 0
+        frame.Parent = parent
+        registerTheme(frame, "BackgroundColor3", "Main")
+        addCorner(frame, 6)
+        addStroke(frame, "Muted", 1, 0.8)
+
+        local label = Instance.new("TextLabel")
+        label.Size = UDim2.new(1, -50, 1, 0)
+        label.BackgroundTransparency = 1
+        label.Font = Enum.Font.Gotham
+        label.TextSize = 13
+        label.TextXAlignment = Enum.TextXAlignment.Left
+        label.Text = labelText
+        label.Parent = frame
+        registerTheme(label, "TextColor3", "Text")
+
+        local btn = Instance.new("TextButton")
+        btn.Size = UDim2.new(0, 30, 0, 20)
+        btn.Position = UDim2.new(1, -35, 0.5, -10)
+        btn.BorderSizePixel = 0
+        btn.Font = Enum.Font.GothamSemibold
+        btn.TextSize = 12
+        btn.AutoButtonColor = false
+        btn.Parent = frame
+        registerTheme(btn, "BackgroundColor3", "Panel")
+        registerTheme(btn, "TextColor3", "Text")
+        addCorner(btn, 6)
+
+        local enabled = true
+        local expanded = false
+
+        local function setExpanded(state)
+            expanded = state and true or false
+            btn.Text = expanded and "v" or ">"
+        end
+
+        btn.MouseButton1Click:Connect(function()
+            if not enabled then
+                return
+            end
+            setExpanded(not expanded)
+            if onToggle then
+                onToggle(expanded)
+            end
+        end)
+
+        setExpanded(false)
+
+        return {
+            SetEnabled = function(_, value)
+                enabled = value and true or false
+                label.TextTransparency = enabled and 0 or 0.4
+                btn.TextTransparency = enabled and 0 or 0.4
+            end,
+            SetExpanded = function(_, value)
+                setExpanded(value)
+            end,
+            Frame = frame
+        }
+    end
+
+    local groupKey = opts.GroupKey or opts.Key or opts.DisplayName or "AutoBuyGroup"
+    Config.AutoBuyGroups = Config.AutoBuyGroups or {}
+    local group = Config.AutoBuyGroups[groupKey] or {}
+    Config.AutoBuyGroups[groupKey] = group
+
+    group.UseUpgradeAll = group.UseUpgradeAll ~= nil and group.UseUpgradeAll or true
+    group.SkipMaxed = group.SkipMaxed ~= nil and group.SkipMaxed or true
+    group.ClickSpeed = tonumber(group.ClickSpeed) or (opts.DefaultCooldown or 0.6)
+    group.Shops = group.Shops or {}
+    group.Items = group.Items or {}
+    group.Enabled = group.Enabled == true
+
+    for _, shop in ipairs(shops) do
+        shop.Key = shop.Key or shop.ShopName or shop.DisplayName
+        shop.DisplayName = shop.DisplayName or shop.ShopName or shop.Key
+        if group.Shops[shop.Key] == nil then
+            group.Shops[shop.Key] = false
+        end
+        group.Items[shop.Key] = group.Items[shop.Key] or {}
+        for _, item in ipairs(shop.Items or {}) do
+            if group.Items[shop.Key][item] == nil then
+                group.Items[shop.Key][item] = true
+            end
+        end
+    end
+
+    saveConfig()
+
+    local enabled = group.Enabled == true
+    local conn = nil
+    local accum = 0
+    local interval = opts.Interval or 0.25
+    local lastClick = 0
+    local useUpgradeAll = group.UseUpgradeAll == true
+    local skipMaxedEnabled = group.SkipMaxed == true
+    local itemEnabled = group.Items
+    local shopEnabled = group.Shops
+    local maxed = {}
+    local promptConn = nil
+    local shopIndex = 1
+    local itemIndex = {}
+
+    setGlobalClickCooldown(opts.CooldownKey or groupKey, group.ClickSpeed)
+
+    local function attachPromptListener()
+        if promptConn then
+            return
+        end
+        local ok, remote = pcall(function()
+            return game:GetService("ReplicatedStorage").Packages.Knit.Services.RemotesService.RE.PromptNotification
+        end)
+        if not ok or not remote or not remote:IsA("RemoteEvent") then
+            return
+        end
+        promptConn = remote.OnClientEvent:Connect(function(_, msg)
+            if not enabled then
+                return
+            end
+            if type(msg) ~= "string" then
+                return
+            end
+            local lower = string.lower(msg)
+            if not string.find(lower, "already reached max upgrade", 1, true) then
+                return
+            end
+            for _, shop in ipairs(shops) do
+                local key = shop.Key
+                for _, item in ipairs(shop.Items or {}) do
+                    if string.find(lower, string.lower(item), 1, true) then
+                        maxed[key] = maxed[key] or {}
+                        maxed[key][item] = true
+                    end
+                end
+            end
+        end)
+        trackConnection(promptConn)
+    end
+
+    local function detachPromptListener()
+        if promptConn then
+            promptConn:Disconnect()
+            promptConn = nil
+        end
+    end
+
+    local function getNextItem()
+        local totalShops = #shops
+        for _ = 1, totalShops do
+            local shop = shops[shopIndex]
+            shopIndex += 1
+            if shopIndex > totalShops then
+                shopIndex = 1
+            end
+
+            local key = shop.Key
+            if shopEnabled[key] then
+                local list = shop.Items or {}
+                local idx = itemIndex[key] or 1
+                for _ = 1, #list do
+                    local name = list[idx]
+                    idx += 1
+                    if idx > #list then
+                        idx = 1
+                    end
+                    if itemEnabled[key] and itemEnabled[key][name] and (not skipMaxedEnabled or not (maxed[key] and maxed[key][name])) then
+                        itemIndex[key] = idx
+                        return shop, name
+                    end
+                end
+                itemIndex[key] = idx
+            end
+        end
+        return nil
+    end
+
+    local container = createSubSectionBox(section, opts.DisplayName or "Auto Buy Shop")
+    local childControls = {}
+
+    local function addControl(ctrl)
+        childControls[#childControls + 1] = ctrl
+        return ctrl
+    end
+
+    local uiReady = false
+
+    local function applyEnabledState(value)
+        enabled = value == true
+        group.Enabled = enabled
+        saveConfig()
+        setControlsEnabled(childControls, enabled)
+        setAutoBuyGroupActive(groupKey, opts.DisplayName or groupKey, enabled, shops, shopEnabled, itemEnabled)
+        if enabled then
+            if conn then
+                conn:Disconnect()
+            end
+            accum = 0
+            shopIndex = 1
+            itemIndex = {}
+            maxed = {}
+            attachPromptListener()
+            conn = RunService.Heartbeat:Connect(function(dt)
+                accum += dt
+                if accum >= interval then
+                    accum = 0
+                    local remote = nil
+                    if opts.GetRemote then
+                        remote = opts.GetRemote()
+                    elseif getMainRemote then
+                        remote = getMainRemote()
+                    end
+                    if not remote then
+                        return
+                    end
+                    local now = os.clock()
+                    if now - lastClick < getGlobalClickCooldown(opts.CooldownKey or groupKey) then
+                        return
+                    end
+                    local action = useUpgradeAll and "UpgradeAll" or "Upgrade"
+                    local shop, itemName = getNextItem()
+                    if shop and itemName then
+                        pcall(function()
+                            remote:FireServer(action, shop.ShopName or shop.Key, itemName)
+                        end)
+                        if AutoBuyLogState.SetActiveItem then
+                            AutoBuyLogState.SetActiveItem(groupKey, shop.Key, itemName)
+                        end
+                        lastClick = now
+                    end
+                end
+            end)
+            trackConnection(conn)
+        else
+            if conn then
+                conn:Disconnect()
+                conn = nil
+            end
+            detachPromptListener()
+        end
+    end
+
+    local enabledToggle = createToggle(container, "On/Off", nil, enabled, function(v)
+        if not uiReady then
+            return
+        end
+        applyEnabledState(v)
+    end)
+
+    addControl(createToggle(container, opts.ModeToggleName or "Mode: Upgrade All", nil, useUpgradeAll, function(v)
+        useUpgradeAll = v == true
+        group.UseUpgradeAll = useUpgradeAll
+        saveConfig()
+    end))
+
+    addControl(createSlider(container, opts.SpeedLabel or "Click Speed (sec)", nil, 0.1, 5, group.ClickSpeed, function(v)
+        group.ClickSpeed = v
+        setGlobalClickCooldown(opts.CooldownKey or groupKey, v)
+        saveConfig()
+    end, 1))
+
+    addControl(createToggle(container, "Skip Maxed Items", nil, skipMaxedEnabled, function(v)
+        skipMaxedEnabled = v == true
+        group.SkipMaxed = skipMaxedEnabled
+        saveConfig()
+    end))
+
+    local listContainer
+    addControl(createListDropdownRow(container, "Item List", function(open)
+        if listContainer then
+            listContainer.Visible = open
+        end
+    end))
+
+    local listContent = createSubSectionBox(container, "Item List")
+    listContainer = listContent.Parent
+    listContainer.Visible = false
+
+    local function addListDivider(parent)
+        local div = Instance.new("Frame")
+        div.Size = UDim2.new(1, 0, 0, 1)
+        div.BorderSizePixel = 0
+        div.Parent = parent
+        registerTheme(div, "BackgroundColor3", "Muted")
+        return div
+    end
+
+    for i, shop in ipairs(shops) do
+        local shopKey = shop.Key
+        local shopCtrl = createToggle(listContent, shop.DisplayName, nil, shopEnabled[shopKey], function(v)
+            shopEnabled[shopKey] = v == true
+            group.Shops[shopKey] = shopEnabled[shopKey]
+            saveConfig()
+            if enabled then
+                setAutoBuyGroupActive(groupKey, opts.DisplayName or groupKey, enabled, shops, shopEnabled, itemEnabled)
+            end
+        end)
+        if shopCtrl and shopCtrl.Label then
+            shopCtrl.Label.Font = Enum.Font.GothamSemibold
+            shopCtrl.Label.TextSize = 12
+        end
+        addControl(shopCtrl)
+
+        for _, item in ipairs(shop.Items or {}) do
+            addControl(createToggle(listContent, item, nil, itemEnabled[shopKey][item], function(v)
+                itemEnabled[shopKey][item] = v == true
+                group.Items[shopKey][item] = itemEnabled[shopKey][item]
+                saveConfig()
+                if enabled then
+                    setAutoBuyGroupActive(groupKey, opts.DisplayName or groupKey, enabled, shops, shopEnabled, itemEnabled)
+                end
+            end))
+        end
+
+        if i < #shops then
+            addListDivider(listContent)
+        end
+    end
+
+    setControlsEnabled(childControls, enabled)
+    uiReady = true
+    applyEnabledState(enabled)
+end
+
 local function createDropdown(parent, text, flag, options, currentOption, callback)
     local selected = currentOption
     if flag and Config[flag] ~= nil then
@@ -1676,15 +3341,21 @@ local function createDropdown(parent, text, flag, options, currentOption, callba
     end
 
     local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(1, 0, 0, 30)
+    frame.Size = UDim2.new(1, 0, 0, 0)
+    frame.AutomaticSize = Enum.AutomaticSize.Y
     frame.BorderSizePixel = 0
     frame.Parent = parent
     registerTheme(frame, "BackgroundColor3", "Main")
     addCorner(frame, 6)
     addStroke(frame, "Muted", 1, 0.8)
 
+    local stack = Instance.new("UIListLayout")
+    stack.SortOrder = Enum.SortOrder.LayoutOrder
+    stack.Padding = UDim.new(0, 4)
+    stack.Parent = frame
+
     local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(1, 0, 1, 0)
+    btn.Size = UDim2.new(1, 0, 0, 30)
     btn.BackgroundTransparency = 1
     btn.Font = Enum.Font.Gotham
     btn.TextSize = 13
@@ -1696,7 +3367,6 @@ local function createDropdown(parent, text, flag, options, currentOption, callba
 
     local list = Instance.new("Frame")
     list.Size = UDim2.new(1, 0, 0, 0)
-    list.Position = UDim2.new(0, 0, 1, 2)
     list.BorderSizePixel = 0
     list.Visible = false
     list.Parent = frame
@@ -1738,10 +3408,20 @@ local function createDropdown(parent, text, flag, options, currentOption, callba
         end)
     end
 
+    local function updateListSize()
+        if list.Visible then
+            list.Size = UDim2.new(1, 0, 0, #options * 26)
+        else
+            list.Size = UDim2.new(1, 0, 0, 0)
+        end
+    end
+
     btn.MouseButton1Click:Connect(function()
         list.Visible = not list.Visible
-        list.Size = UDim2.new(1, 0, 0, #options * 26)
+        updateListSize()
     end)
+
+    updateListSize()
 
     setSelected(selected, true)
     if callback then
@@ -1764,6 +3444,7 @@ end
 local function createTab(name)
     local tabButton = createTabButton(name)
     local page = createPage()
+    page.Name = "Page_" .. tostring(name)
 
     local function setActive()
         for _, child in ipairs(Pages:GetChildren()) do
@@ -1827,16 +3508,102 @@ end
 -- =====================================================
 -- NOTIFY
 -- =====================================================
+State.Notify = State.Notify or {}
+State.Notify.Margin = State.Notify.Margin or 8
+State.Notify.MarginX = State.Notify.MarginX or State.Notify.Margin
+State.Notify.MarginY = State.Notify.MarginY or 2
+State.Notify.Width = State.Notify.Width or 260
+State.Notify.MinWidth = State.Notify.MinWidth or 180
+State.Notify.MinHeight = State.Notify.MinHeight or 44
+State.Notify.MaxHeightRatio = State.Notify.MaxHeightRatio or 0.5
+State.Notify.Counter = State.Notify.Counter or 0
+
+State.Notify.EnsureContainer = State.Notify.EnsureContainer or function()
+    if State.Notify.Container and State.Notify.Container.Parent then
+        return
+    end
+    local container = Instance.new("ScrollingFrame")
+    container.Name = "NotifyContainer"
+    container.Size = UDim2.new(0, State.Notify.Width, 0, 0)
+    container.Position = UDim2.new(1, -(State.Notify.Width + (State.Notify.MarginX or State.Notify.Margin)), 0, (State.Notify.MarginY or State.Notify.Margin))
+    container.AnchorPoint = Vector2.new(0, 0)
+    container.BorderSizePixel = 0
+    container.BackgroundTransparency = 1
+    container.ScrollBarThickness = 4
+    container.ScrollingDirection = Enum.ScrollingDirection.Y
+    container.CanvasSize = UDim2.new(0, 0, 0, 0)
+    container.Parent = ScreenGui
+    container.Active = true
+    if State.Layout and State.Layout.ApplyScale then
+        State.Layout.ApplyScale(container)
+    end
+
+    local list = Instance.new("UIListLayout")
+    list.Padding = UDim.new(0, 8)
+    list.SortOrder = Enum.SortOrder.LayoutOrder
+    list.Parent = container
+    list:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+        if State.Notify and State.Notify.UpdateLayout then
+            State.Notify.UpdateLayout()
+        end
+    end)
+
+    local pad = Instance.new("UIPadding")
+    pad.PaddingTop = UDim.new(0, 0)
+    pad.PaddingBottom = UDim.new(0, 0)
+    pad.PaddingLeft = UDim.new(0, 0)
+    pad.PaddingRight = UDim.new(0, 0)
+    pad.Parent = container
+
+    State.Notify.Container = container
+    State.Notify.List = list
+end
+
+State.Notify.UpdateLayout = State.Notify.UpdateLayout or function()
+    local container = State.Notify.Container
+    local list = State.Notify.List
+    if not container or not list then
+        return
+    end
+    if State.Layout and State.Layout.ApplyScale then
+        State.Layout.ApplyScale(container)
+    end
+    local vp = (State.Layout and State.Layout.GetViewport and State.Layout.GetViewport()) or Vector2.new(0, 0)
+    local inset = (State.Layout and State.Layout.GetInset and State.Layout.GetInset()) or Vector2.new(0, 0)
+    local scale = (State.Layout and State.Layout.GetScale and State.Layout.GetScale()) or 1
+    local marginX = State.Notify.MarginX or State.Notify.Margin or 8
+    local marginY = State.Notify.MarginY or State.Notify.Margin or 2
+    local baseWidth = State.Notify.Width or 260
+    local minWidth = State.Notify.MinWidth or 180
+    local maxWidth = math.max(minWidth, math.floor((vp.X * 0.36) / math.max(0.1, scale)))
+    local width = math.clamp(baseWidth, minWidth, maxWidth)
+    local maxH = math.floor(vp.Y * (State.Notify.MaxHeightRatio or 0.5))
+    local contentH = list.AbsoluteContentSize.Y
+    local height = math.max(0, math.min(contentH, maxH))
+    container.Size = UDim2.new(0, width, 0, height)
+    container.CanvasSize = UDim2.new(0, 0, 0, contentH)
+    State.Notify.LastWidth = width
+    State.Notify.LastScale = scale
+    local topInset = (ScreenGui and ScreenGui.IgnoreGuiInset) and inset.Y or 0
+    local x = math.max(marginX, vp.X - (width * scale) - marginX)
+    container.Position = UDim2.new(0, x, 0, marginY + topInset)
+end
+
 local function notify(title, content, duration)
+    if State.Notify and State.Notify.EnsureContainer then
+        State.Notify.EnsureContainer()
+    end
     local notif = Instance.new("Frame")
-    notif.Size = UDim2.new(0, 260, 0, 0)
+    notif.Size = UDim2.new(1, 0, 0, 0)
     notif.AutomaticSize = Enum.AutomaticSize.Y
-    notif.Position = UDim2.new(1, -270, 0, 10)
+    notif.Position = UDim2.new(0, 0, 0, 0)
     notif.BorderSizePixel = 0
-    notif.Parent = ScreenGui
+    notif.Parent = State.Notify.Container or ScreenGui
     registerTheme(notif, "BackgroundColor3", "Main")
     addCorner(notif, 8)
     addStroke(notif, "Muted", 1, 0.8)
+    State.Notify.Counter = (State.Notify.Counter or 0) + 1
+    notif.LayoutOrder = State.Notify.Counter
 
     local pad = Instance.new("UIPadding")
     pad.PaddingTop = UDim.new(0, 6)
@@ -1845,15 +3612,39 @@ local function notify(title, content, duration)
     pad.PaddingRight = UDim.new(0, 8)
     pad.Parent = notif
 
+    local header = Instance.new("Frame")
+    header.Size = UDim2.new(1, 0, 0, 18)
+    header.BackgroundTransparency = 1
+    header.Parent = notif
+
     local t = Instance.new("TextLabel")
-    t.Size = UDim2.new(1, 0, 0, 18)
+    t.Size = UDim2.new(1, -24, 1, 0)
     t.BackgroundTransparency = 1
     t.Font = Enum.Font.GothamSemibold
     t.TextSize = 12
     t.TextXAlignment = Enum.TextXAlignment.Left
     t.Text = title
-    t.Parent = notif
+    t.Parent = header
     registerTheme(t, "TextColor3", "Text")
+
+    local closeBtn = Instance.new("TextButton")
+    closeBtn.Size = UDim2.new(0, 20, 0, 18)
+    closeBtn.Position = UDim2.new(1, -20, 0, 0)
+    closeBtn.BorderSizePixel = 0
+    closeBtn.Text = "x"
+    closeBtn.AutoButtonColor = false
+    closeBtn.Font = Enum.Font.GothamSemibold
+    closeBtn.TextSize = 11
+    closeBtn.Parent = header
+    registerTheme(closeBtn, "BackgroundColor3", "Panel")
+    registerTheme(closeBtn, "TextColor3", "Text")
+    addCorner(closeBtn, 4)
+
+    local divider = Instance.new("Frame")
+    divider.Size = UDim2.new(1, 0, 0, 2)
+    divider.BorderSizePixel = 0
+    divider.Parent = notif
+    registerTheme(divider, "BackgroundColor3", "Accent")
 
     local c = Instance.new("TextLabel")
     c.Size = UDim2.new(1, 0, 0, 0)
@@ -1869,36 +3660,67 @@ local function notify(title, content, duration)
     registerTheme(c, "TextColor3", "Muted")
 
     local list = Instance.new("UIListLayout")
-    list.Padding = UDim.new(0, 4)
+    list.Padding = UDim.new(0, 6)
     list.SortOrder = Enum.SortOrder.LayoutOrder
     list.Parent = notif
 
     local minSize = Instance.new("UISizeConstraint")
-    minSize.MinSize = Vector2.new(260, 48)
+    local minW = State.Notify.MinWidth or 180
+    local maxW = State.Notify.LastWidth or State.Notify.Width or 260
+    if maxW > 0 then
+        minW = math.min(minW, maxW)
+    end
+    minSize.MinSize = Vector2.new(minW, State.Notify.MinHeight or 44)
     minSize.Parent = notif
+
+    closeBtn.MouseButton1Click:Connect(function()
+        if notif and notif.Parent then
+            notif:Destroy()
+        end
+        if State.Notify and State.Notify.UpdateLayout then
+            State.Notify.UpdateLayout()
+        end
+    end)
 
     task.delay(duration or 4, function()
         if notif and notif.Parent then
             notif:Destroy()
+            if State.Notify and State.Notify.UpdateLayout then
+                State.Notify.UpdateLayout()
+            end
         end
     end)
+    if State.Notify and State.Notify.UpdateLayout then
+        State.Notify.UpdateLayout()
+    end
 end
 
 confirmDialog = function(title, content, onConfirm)
     local dialog = Instance.new("Frame")
-    dialog.Size = UDim2.new(0, 320, 0, 0)
+    local vp = (State.Layout and State.Layout.GetViewport and State.Layout.GetViewport()) or Vector2.new(0, 0)
+    local scale = (State.Layout and State.Layout.GetScale and State.Layout.GetScale()) or 1
+    local baseW = 320
+    local minW = 220
+    local maxW = math.max(minW, math.floor((vp.X * 0.7) / math.max(0.1, scale)))
+    local width = math.clamp(baseW, minW, maxW)
+    dialog.Size = UDim2.new(0, width, 0, 0)
     dialog.AutomaticSize = Enum.AutomaticSize.Y
-    dialog.Position = UDim2.new(0.5, -160, 0.5, 0)
+    dialog.Position = UDim2.new(0.5, -math.floor(width / 2), 0.5, 0)
     dialog.BorderSizePixel = 0
     dialog.Parent = ScreenGui
     dialog.ZIndex = 200
+    dialog.Active = true
+    if State.Layout and State.Layout.ApplyScale then
+        State.Layout.ApplyScale(dialog)
+    end
     registerTheme(dialog, "BackgroundColor3", "Main")
     addCorner(dialog, 10)
     addStroke(dialog, "Muted", 1, 0.6)
     addGradient(dialog, 90, 0, 0.15)
 
     local titleBar = Instance.new("TextLabel")
-    titleBar.Size = UDim2.new(1, 0, 0, 28)
+    titleBar.Size = UDim2.new(1, -20, 0, 28)
+    titleBar.Position = UDim2.new(0, 10, 0, 0)
     titleBar.BackgroundTransparency = 1
     titleBar.Font = Enum.Font.GothamSemibold
     titleBar.TextSize = 14
@@ -1910,7 +3732,7 @@ confirmDialog = function(title, content, onConfirm)
 
     local line = Instance.new("Frame")
     line.Size = UDim2.new(1, 0, 0, 2)
-    line.Position = UDim2.new(0, 0, 0, 26)
+    line.Position = UDim2.new(0, 0, 0, 28)
     line.BorderSizePixel = 0
     line.Parent = dialog
     registerTheme(line, "BackgroundColor3", "Accent")
@@ -1996,6 +3818,39 @@ confirmDialog = function(title, content, onConfirm)
             dialog:Destroy()
         end
     end)
+
+    local dragging = false
+    local dragStart = nil
+    local startPos = nil
+
+    local function beginDrag(input)
+        dragging = true
+        dragStart = input.Position
+        startPos = dialog.Position
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+            end
+        end)
+    end
+
+    titleBar.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            beginDrag(input)
+        end
+    end)
+
+    UIS.InputChanged:Connect(function(input)
+        if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+            local delta = input.Position - dragStart
+            dialog.Position = UDim2.new(
+                startPos.X.Scale,
+                startPos.X.Offset + delta.X,
+                startPos.Y.Scale,
+                startPos.Y.Offset + delta.Y
+            )
+        end
+    end)
 end
 
 -- =====================================================
@@ -2004,8 +3859,6 @@ end
 local teleportWithData
 LoadingUI:Set(35, "Membuat tab utama...")
 local HomeTab = createTab("Home")
-
-notify("Script Loaded", "Script berhasil", 5)
 
 HomeTab:CreateSection("Home")
 
@@ -2060,7 +3913,7 @@ HomeLogTitle.BackgroundTransparency = 1
 HomeLogTitle.Font = Enum.Font.GothamSemibold
 HomeLogTitle.TextSize = 12
 HomeLogTitle.TextXAlignment = Enum.TextXAlignment.Left
-HomeLogTitle.Text = "Logs (Developer Console Errors)"
+HomeLogTitle.Text = "Logs (Developer Console)"
 HomeLogTitle.Parent = HomeLogContainer
 registerTheme(HomeLogTitle, "TextColor3", "Text")
 
@@ -2101,7 +3954,7 @@ local function clearHomeLogs()
     end
 end
 
-local function addHomeLogEntry(msg)
+local function addHomeLogEntry(msg, msgType)
     local frame = Instance.new("Frame")
     frame.Size = UDim2.new(1, 0, 0, 0)
     frame.AutomaticSize = Enum.AutomaticSize.Y
@@ -2127,7 +3980,8 @@ local function addHomeLogEntry(msg)
     title.Font = Enum.Font.GothamSemibold
     title.TextSize = 12
     title.TextXAlignment = Enum.TextXAlignment.Left
-    title.Text = "Error"
+    local typeName = msgType and tostring(msgType) or "Message"
+    title.Text = typeName
     title.Parent = header
     registerTheme(title, "TextColor3", "Text")
 
@@ -2169,17 +4023,17 @@ local function addHomeLogEntry(msg)
         end
     end)
 
-    HomeLogs[#HomeLogs + 1] = {Frame = frame, Text = msg}
+    HomeLogs[#HomeLogs + 1] = {Frame = frame, Text = msg, Type = msgType}
 end
 
 local function loadHomeLogsFromBuffer()
     clearHomeLogs()
-    local history = getLogHistoryErrors()
+    local history = getLogHistoryAll()
     for _, item in ipairs(history) do
-        addHomeLogEntry(item.Message)
+        addHomeLogEntry(item.Message, item.Type)
     end
     for _, item in ipairs(ConsoleLogBuffer) do
-        addHomeLogEntry(item.Message)
+        addHomeLogEntry(item.Message, item.Type)
     end
 end
 
@@ -2194,9 +4048,7 @@ HomeTab:CreateToggle({
                 HomeLogConnection:Disconnect()
             end
             HomeLogConnection = trackConnection(LogService.MessageOut:Connect(function(message, msgType)
-                if msgType == Enum.MessageType.MessageError then
-                    addHomeLogEntry(message)
-                end
+                addHomeLogEntry(message, msgType)
             end))
         else
             if HomeLogConnection then
@@ -2307,11 +4159,82 @@ local function TogglePostFX(state)
     end
 end
 
+State.VisualLock = State.VisualLock or {}
+State.VisualLock.Active = State.VisualLock.Active or {
+    NoFog = false,
+    NoFX = false,
+    LowGraphics = false,
+    FullBright = false
+}
+State.VisualLock.Conns = State.VisualLock.Conns or {}
+State.VisualLock.Connected = State.VisualLock.Connected == true
+
+State.VisualLock.Apply = State.VisualLock.Apply or function()
+    if State.VisualLock.Active.NoFog then
+        Lighting.FogStart = 1e5
+        Lighting.FogEnd = 1e5
+    end
+    if State.VisualLock.Active.NoFX then
+        TogglePostFX(false)
+    end
+    if State.VisualLock.Active.LowGraphics then
+        pcall(function()
+            Lighting.GlobalShadows = false
+            if settings and settings().Rendering then
+                settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
+            end
+        end)
+    end
+    if State.VisualLock.Active.FullBright then
+        Lighting.Brightness = 2
+        Lighting.ClockTime = 12
+        Lighting.GlobalShadows = false
+    end
+end
+
+State.VisualLock.UpdateConnections = State.VisualLock.UpdateConnections or function()
+    local any = false
+    for _, v in pairs(State.VisualLock.Active) do
+        if v then
+            any = true
+            break
+        end
+    end
+
+    if any and not State.VisualLock.Connected then
+        State.VisualLock.Connected = true
+        local c1 = Lighting.Changed:Connect(function()
+            State.VisualLock.Apply()
+        end)
+        State.VisualLock.Conns[#State.VisualLock.Conns + 1] = c1
+        trackConnection(c1)
+
+        local c2 = Lighting.ChildAdded:Connect(function(child)
+            if State.VisualLock.Active.NoFX then
+                if child:IsA("BloomEffect") or child:IsA("BlurEffect") or child:IsA("SunRaysEffect") or child:IsA("ColorCorrectionEffect") then
+                    child.Enabled = false
+                end
+            end
+        end)
+        State.VisualLock.Conns[#State.VisualLock.Conns + 1] = c2
+        trackConnection(c2)
+    elseif not any and State.VisualLock.Connected then
+        State.VisualLock.Connected = false
+        for _, conn in ipairs(State.VisualLock.Conns) do
+            pcall(function()
+                conn:Disconnect()
+            end)
+        end
+        State.VisualLock.Conns = {}
+    end
+end
+
 VisualTab:CreateToggle({
     Name = "No Fog",
     CurrentValue = false,
     Flag = "NoFog",
     Callback = function(Value)
+        State.VisualLock.Active.NoFog = Value == true
         if Value then
             Lighting.FogStart = 1e5
             Lighting.FogEnd = 1e5
@@ -2319,6 +4242,8 @@ VisualTab:CreateToggle({
             Lighting.FogStart = DefaultLighting.FogStart
             Lighting.FogEnd = DefaultLighting.FogEnd
         end
+        State.VisualLock.UpdateConnections()
+        State.VisualLock.Apply()
     end
 })
 
@@ -2327,7 +4252,10 @@ VisualTab:CreateToggle({
     CurrentValue = false,
     Flag = "NoFX",
     Callback = function(Value)
+        State.VisualLock.Active.NoFX = Value == true
         TogglePostFX(not Value)
+        State.VisualLock.UpdateConnections()
+        State.VisualLock.Apply()
     end
 })
 
@@ -2336,6 +4264,7 @@ VisualTab:CreateToggle({
     CurrentValue = false,
     Flag = "LowGraphics",
     Callback = function(Value)
+        State.VisualLock.Active.LowGraphics = Value == true
         pcall(function()
             if Value then
                 Lighting.GlobalShadows = false
@@ -2349,6 +4278,8 @@ VisualTab:CreateToggle({
                 end
             end
         end)
+        State.VisualLock.UpdateConnections()
+        State.VisualLock.Apply()
     end
 })
 
@@ -2357,6 +4288,7 @@ VisualTab:CreateToggle({
     CurrentValue = false,
     Flag = "FullBright",
     Callback = function(Value)
+        State.VisualLock.Active.FullBright = Value == true
         if Value then
             Lighting.Brightness = 2
             Lighting.ClockTime = 12
@@ -2366,6 +4298,8 @@ VisualTab:CreateToggle({
             Lighting.ClockTime = DefaultLighting.ClockTime
             Lighting.GlobalShadows = DefaultLighting.GlobalShadows
         end
+        State.VisualLock.UpdateConnections()
+        State.VisualLock.Apply()
     end
 })
 
@@ -2459,55 +4393,172 @@ end
 LoadingUI:Set(65, "Menambahkan modul dev...")
 local DevTab = createTab("Spy / Dev")
 
-DevTab:CreateSection("Teleport Tools")
+State.DevSections = State.DevSections or {}
+State.DevSections.Teleport = createSectionBox(DevTab:GetPage(), "Teleport Tools")
+State.DevSections.Notify = createSectionBox(DevTab:GetPage(), "Notify Tools")
+State.DevSections.CopyData = createSectionBox(DevTab:GetPage(), "Copy Data Logger")
+State.DevSections.Action = createSectionBox(DevTab:GetPage(), "Action Logger")
+State.DevSections.Currency = createSectionBox(DevTab:GetPage(), "Currency Tracker")
+
+State.NotifyTest = State.NotifyTest or {}
+State.NotifyTest.Setup = State.NotifyTest.Setup or function(parent)
+    State.NotifyTest.Title = State.NotifyTest.Title or "Test"
+    State.NotifyTest.Content = State.NotifyTest.Content or "Ini contoh isi notify."
+
+    local container = (State.DevSections and State.DevSections.Notify) or parent
+    if not container then
+        return
+    end
+
+    createParagraph(container, "Test Notify", "Rangkaian fitur untuk menguji tampilan notifikasi.")
+
+    createInput(container, "Notify Title", nil, State.NotifyTest.Title, function(v)
+        State.NotifyTest.Title = v or ""
+    end)
+
+    local notifyContentBox = Instance.new("Frame")
+    notifyContentBox.Size = UDim2.new(1, 0, 0, 90)
+    notifyContentBox.BorderSizePixel = 0
+    notifyContentBox.Parent = container
+    registerTheme(notifyContentBox, "BackgroundColor3", "Main")
+    addCorner(notifyContentBox, 6)
+    addStroke(notifyContentBox, "Muted", 1, 0.8)
+
+    local notifyContentLabel = Instance.new("TextLabel")
+    notifyContentLabel.Size = UDim2.new(1, 0, 0, 18)
+    notifyContentLabel.Position = UDim2.new(0, 8, 0, 6)
+    notifyContentLabel.BackgroundTransparency = 1
+    notifyContentLabel.Font = Enum.Font.Gotham
+    notifyContentLabel.TextSize = 12
+    notifyContentLabel.TextXAlignment = Enum.TextXAlignment.Left
+    notifyContentLabel.Text = "Notify Content"
+    notifyContentLabel.Parent = notifyContentBox
+    registerTheme(notifyContentLabel, "TextColor3", "Text")
+
+    local notifyContentScroll = Instance.new("ScrollingFrame")
+    notifyContentScroll.Size = UDim2.new(1, -12, 1, -28)
+    notifyContentScroll.Position = UDim2.new(0, 6, 0, 24)
+    notifyContentScroll.BorderSizePixel = 0
+    notifyContentScroll.BackgroundTransparency = 1
+    notifyContentScroll.ScrollBarThickness = 4
+    notifyContentScroll.ScrollingDirection = Enum.ScrollingDirection.Y
+    notifyContentScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+    notifyContentScroll.ClipsDescendants = true
+    notifyContentScroll.Parent = notifyContentBox
+    registerTheme(notifyContentScroll, "BackgroundColor3", "Panel")
+    addCorner(notifyContentScroll, 6)
+
+    local notifyContentInput = Instance.new("TextBox")
+    notifyContentInput.Size = UDim2.new(1, -8, 0, 24)
+    notifyContentInput.Position = UDim2.new(0, 4, 0, 4)
+    notifyContentInput.BorderSizePixel = 0
+    notifyContentInput.ClearTextOnFocus = false
+    notifyContentInput.Font = Enum.Font.Gotham
+    notifyContentInput.TextSize = 12
+    notifyContentInput.TextXAlignment = Enum.TextXAlignment.Left
+    notifyContentInput.TextYAlignment = Enum.TextYAlignment.Top
+    notifyContentInput.TextWrapped = true
+    notifyContentInput.MultiLine = true
+    notifyContentInput.Text = State.NotifyTest.Content
+    notifyContentInput.ClipsDescendants = true
+    notifyContentInput.Parent = notifyContentScroll
+    registerTheme(notifyContentInput, "BackgroundColor3", "Panel")
+    registerTheme(notifyContentInput, "TextColor3", "Text")
+    addCorner(notifyContentInput, 6)
+
+    local notifyContentPad = Instance.new("UIPadding")
+    notifyContentPad.PaddingLeft = UDim.new(0, 6)
+    notifyContentPad.PaddingRight = UDim.new(0, 6)
+    notifyContentPad.PaddingTop = UDim.new(0, 4)
+    notifyContentPad.PaddingBottom = UDim.new(0, 4)
+    notifyContentPad.Parent = notifyContentInput
+
+    local function updateNotifyContentSize()
+        local bounds = notifyContentInput.TextBounds
+        local minH = math.max(24, notifyContentScroll.AbsoluteSize.Y - 8)
+        local textH = (bounds and bounds.Y or 0) + 12
+        local newH = math.max(minH, textH)
+        notifyContentInput.Size = UDim2.new(1, -8, 0, newH)
+        notifyContentScroll.CanvasSize = UDim2.new(0, 0, 0, newH + 8)
+    end
+
+    notifyContentInput:GetPropertyChangedSignal("Text"):Connect(function()
+        updateNotifyContentSize()
+        State.NotifyTest.Content = notifyContentInput.Text or ""
+    end)
+
+    notifyContentScroll:GetPropertyChangedSignal("AbsoluteSize"):Connect(updateNotifyContentSize)
+    updateNotifyContentSize()
+
+    createButton(container, "Trigger Notify (Test)", function()
+        notify(State.NotifyTest.Title or "Test", State.NotifyTest.Content or "", 4)
+    end)
+end
+
+State.NotifyTest.Setup(State.DevSections.Notify)
 
 -- [SECTION] Saved Position State
 local SavedPosition = nil
 local SavedCamera = nil
 
 -- [FUNC] Save current player + camera snapshot
-DevTab:CreateButton({
-    Name = "Save Current Position",
-    Callback = function()
-        if LP.Character and LP.Character:FindFirstChild("HumanoidRootPart") then
-            SavedPosition = LP.Character.HumanoidRootPart.Position
-            local cam = workspace.CurrentCamera
-            if cam then
-                local zoom = (cam.CFrame.Position - cam.Focus.Position).Magnitude
-                SavedCamera = {
-                    CFrame = cam.CFrame,
-                    Focus = cam.Focus,
-                    FOV = cam.FieldOfView,
-                    Type = cam.CameraType,
-                    Subject = cam.CameraSubject,
-                    Zoom = zoom,
-                    MinZoom = LP.CameraMinZoomDistance,
-                    MaxZoom = LP.CameraMaxZoomDistance
-                }
-            end
-            notify("Position Saved", tostring(SavedPosition), 3)
+createButton(State.DevSections.Teleport, "Save Current Position", function()
+    if LP.Character and LP.Character:FindFirstChild("HumanoidRootPart") then
+        SavedPosition = LP.Character.HumanoidRootPart.Position
+        local cam = workspace.CurrentCamera
+        if cam then
+            local zoom = (cam.CFrame.Position - cam.Focus.Position).Magnitude
+            SavedCamera = {
+                CFrame = cam.CFrame,
+                Focus = cam.Focus,
+                FOV = cam.FieldOfView,
+                Type = cam.CameraType,
+                Subject = cam.CameraSubject,
+                Zoom = zoom,
+                MinZoom = LP.CameraMinZoomDistance,
+                MaxZoom = LP.CameraMaxZoomDistance
+            }
         end
+        notify("Position Saved", tostring(SavedPosition), 3)
     end
-})
+end)
 
 -- [FUNC] Teleport to saved snapshot (with short camera lock)
-DevTab:CreateButton({
-    Name = "Teleport to Saved Position",
-    Callback = function()
-        if SavedPosition and LP.Character then
-            LP.Character:PivotTo(CFrame.new(SavedPosition))
-            local cam = workspace.CurrentCamera
-            if cam and SavedCamera then
-                local targetType = SavedCamera.Type or cam.CameraType
-                local targetSubject = SavedCamera.Subject or cam.CameraSubject
-                local targetFOV = SavedCamera.FOV or cam.FieldOfView
-                local targetCFrame = SavedCamera.CFrame or cam.CFrame
-                local targetFocus = SavedCamera.Focus or cam.Focus
-                local targetZoom = SavedCamera.Zoom
-                local oldMinZoom = LP.CameraMinZoomDistance
-                local oldMaxZoom = LP.CameraMaxZoomDistance
+createButton(State.DevSections.Teleport, "Teleport to Saved Position", function()
+    if SavedPosition and LP.Character then
+        LP.Character:PivotTo(CFrame.new(SavedPosition))
+        local cam = workspace.CurrentCamera
+        if cam and SavedCamera then
+            local targetType = SavedCamera.Type or cam.CameraType
+            local targetSubject = SavedCamera.Subject or cam.CameraSubject
+            local targetFOV = SavedCamera.FOV or cam.FieldOfView
+            local targetCFrame = SavedCamera.CFrame or cam.CFrame
+            local targetFocus = SavedCamera.Focus or cam.Focus
+            local targetZoom = SavedCamera.Zoom
+            local oldMinZoom = LP.CameraMinZoomDistance
+            local oldMaxZoom = LP.CameraMaxZoomDistance
 
-                cam.CameraType = Enum.CameraType.Scriptable
+            cam.CameraType = Enum.CameraType.Scriptable
+            cam.FieldOfView = targetFOV
+            cam.CFrame = targetCFrame
+            cam.Focus = targetFocus
+            if targetZoom then
+                pcall(function()
+                    LP.CameraMinZoomDistance = targetZoom
+                    LP.CameraMaxZoomDistance = targetZoom
+                end)
+            end
+
+            local lockSeconds = 0.35
+            local startTime = os.clock()
+            local rsConn
+            rsConn = RunService.RenderStepped:Connect(function()
+                if not cam then
+                    if rsConn then
+                        rsConn:Disconnect()
+                    end
+                    return
+                end
                 cam.FieldOfView = targetFOV
                 cam.CFrame = targetCFrame
                 cam.Focus = targetFocus
@@ -2517,45 +4568,24 @@ DevTab:CreateButton({
                         LP.CameraMaxZoomDistance = targetZoom
                     end)
                 end
-
-                local lockSeconds = 0.35
-                local startTime = os.clock()
-                local rsConn
-                rsConn = RunService.RenderStepped:Connect(function()
-                    if not cam then
-                        if rsConn then
-                            rsConn:Disconnect()
-                        end
-                        return
+                if (os.clock() - startTime) >= lockSeconds then
+                    if rsConn then
+                        rsConn:Disconnect()
                     end
-                    cam.FieldOfView = targetFOV
-                    cam.CFrame = targetCFrame
-                    cam.Focus = targetFocus
-                    if targetZoom then
+                    cam.CameraSubject = targetSubject
+                    cam.CameraType = targetType
+                    task.delay(0.1, function()
                         pcall(function()
-                            LP.CameraMinZoomDistance = targetZoom
-                            LP.CameraMaxZoomDistance = targetZoom
+                            LP.CameraMinZoomDistance = oldMinZoom
+                            LP.CameraMaxZoomDistance = oldMaxZoom
                         end)
-                    end
-                    if (os.clock() - startTime) >= lockSeconds then
-                        if rsConn then
-                            rsConn:Disconnect()
-                        end
-                        cam.CameraSubject = targetSubject
-                        cam.CameraType = targetType
-                        task.delay(0.1, function()
-                            pcall(function()
-                                LP.CameraMinZoomDistance = oldMinZoom
-                                LP.CameraMaxZoomDistance = oldMaxZoom
-                            end)
-                        end)
-                    end
-                end)
-                trackConnection(rsConn)
-            end
+                    end)
+                end
+            end)
+            trackConnection(rsConn)
         end
     end
-})
+end)
 
 -- [SECTION] Copy Data Logger (Editable Fields)
 local CopyLogFields = {
@@ -2642,148 +4672,98 @@ local function buildDataFromCopyLog()
 end
 
 -- [FUNC] Copy current position to clipboard + update editable log fields
-DevTab:CreateButton({
-    Name = "Copy Current Position",
-    Callback = function()
-        if LP.Character and LP.Character:FindFirstChild("HumanoidRootPart") then
-            local pos = LP.Character.HumanoidRootPart.Position
-            local cam = workspace.CurrentCamera
-            local camData = ""
-            if cam then
-                local cf = cam.CFrame
-                local focus = cam.Focus
-                local zoom = (cf.Position - focus.Position).Magnitude
-                local cfx, cfy, cfz, r00, r01, r02, r10, r11, r12, r20, r21, r22 = cf:GetComponents()
-                local fx, fy, fz, fr00, fr01, fr02, fr10, fr11, fr12, fr20, fr21, fr22 = focus:GetComponents()
-                camData = (
-                    "    {Label = \"Default\", Data = makeData(\n" ..
-                    "        Vector3.new(%.3f, %.3f, %.3f),\n" ..
-                    "        CFrame.new(%.6f, %.6f, %.6f, %.9f, %.9f, %.9f, %.9f, %.9f, %.9f, %.9f, %.9f, %.9f),\n" ..
-                    "        CFrame.new(%.6f, %.6f, %.6f, %.9f, %.9f, %.9f, %.9f, %.9f, %.9f, %.9f, %.9f, %.9f),\n" ..
-                    "        %.3f,\n" ..
-                    "        %s,\n" ..
-                    "        %.6f,\n" ..
-                    "        %.3f,\n" ..
-                    "        %.3f\n" ..
-                    "    )},"
-                ):format(
-                    pos.X, pos.Y, pos.Z,
-                    cfx, cfy, cfz, r00, r01, r02, r10, r11, r12, r20, r21, r22,
-                    fx, fy, fz, fr00, fr01, fr02, fr10, fr11, fr12, fr20, fr21, fr22,
-                    cam.FieldOfView, tostring(cam.CameraType),
-                    zoom,
-                    LP.CameraMinZoomDistance,
-                    LP.CameraMaxZoomDistance
-                )
-                setCopyLogField("CamCFrame", ("%.6f, %.6f, %.6f, %.9f, %.9f, %.9f, %.9f, %.9f, %.9f, %.9f, %.9f, %.9f")
-                    :format(cfx, cfy, cfz, r00, r01, r02, r10, r11, r12, r20, r21, r22))
-                setCopyLogField("CamFocus", ("%.6f, %.6f, %.6f, %.9f, %.9f, %.9f, %.9f, %.9f, %.9f, %.9f, %.9f, %.9f")
-                    :format(fx, fy, fz, fr00, fr01, fr02, fr10, fr11, fr12, fr20, fr21, fr22))
-                setCopyLogField("CamFOV", string.format("%.3f", cam.FieldOfView))
-                setCopyLogField("CamType", tostring(cam.CameraType))
-                setCopyLogField("CamZoom", string.format("%.6f", zoom))
-            end
-            setCopyLogField("Position", string.format("%.3f, %.3f, %.3f", pos.X, pos.Y, pos.Z))
-            local text = camData ~= "" and camData or ("{ position = Vector3.new(%.3f, %.3f, %.3f) }"):format(pos.X, pos.Y, pos.Z)
-            if setclipboard then
-                setclipboard(text)
-                notify("Copied", text, 3)
-            else
-                notify("Copy Failed", "setclipboard tidak tersedia", 2)
-            end
+createButton(State.DevSections.CopyData, "Copy Current Position", function()
+    if LP.Character and LP.Character:FindFirstChild("HumanoidRootPart") then
+        local pos = LP.Character.HumanoidRootPart.Position
+        local cam = workspace.CurrentCamera
+        local camData = ""
+        if cam then
+            local cf = cam.CFrame
+            local focus = cam.Focus
+            local zoom = (cf.Position - focus.Position).Magnitude
+            local cfx, cfy, cfz, r00, r01, r02, r10, r11, r12, r20, r21, r22 = cf:GetComponents()
+            local fx, fy, fz, fr00, fr01, fr02, fr10, fr11, fr12, fr20, fr21, fr22 = focus:GetComponents()
+            camData = (
+                "    {Label = \"Default\", Data = makeData(\n" ..
+                "        Vector3.new(%.3f, %.3f, %.3f),\n" ..
+                "        CFrame.new(%.6f, %.6f, %.6f, %.9f, %.9f, %.9f, %.9f, %.9f, %.9f, %.9f, %.9f, %.9f),\n" ..
+                "        CFrame.new(%.6f, %.6f, %.6f, %.9f, %.9f, %.9f, %.9f, %.9f, %.9f, %.9f, %.9f, %.9f),\n" ..
+                "        %.3f,\n" ..
+                "        %s,\n" ..
+                "        %.6f,\n" ..
+                "        %.3f,\n" ..
+                "        %.3f\n" ..
+                "    )},"
+            ):format(
+                pos.X, pos.Y, pos.Z,
+                cfx, cfy, cfz, r00, r01, r02, r10, r11, r12, r20, r21, r22,
+                fx, fy, fz, fr00, fr01, fr02, fr10, fr11, fr12, fr20, fr21, fr22,
+                cam.FieldOfView, tostring(cam.CameraType),
+                zoom,
+                LP.CameraMinZoomDistance,
+                LP.CameraMaxZoomDistance
+            )
+            setCopyLogField("CamCFrame", ("%.6f, %.6f, %.6f, %.9f, %.9f, %.9f, %.9f, %.9f, %.9f, %.9f, %.9f, %.9f")
+                :format(cfx, cfy, cfz, r00, r01, r02, r10, r11, r12, r20, r21, r22))
+            setCopyLogField("CamFocus", ("%.6f, %.6f, %.6f, %.9f, %.9f, %.9f, %.9f, %.9f, %.9f, %.9f, %.9f, %.9f")
+                :format(fx, fy, fz, fr00, fr01, fr02, fr10, fr11, fr12, fr20, fr21, fr22))
+            setCopyLogField("CamFOV", string.format("%.3f", cam.FieldOfView))
+            setCopyLogField("CamType", tostring(cam.CameraType))
+            setCopyLogField("CamZoom", string.format("%.6f", zoom))
+        end
+        setCopyLogField("Position", string.format("%.3f, %.3f, %.3f", pos.X, pos.Y, pos.Z))
+        local text = camData ~= "" and camData or ("{ position = Vector3.new(%.3f, %.3f, %.3f) }"):format(pos.X, pos.Y, pos.Z)
+        if setclipboard then
+            setclipboard(text)
+            notify("Copied", text, 3)
+        else
+            notify("Copy Failed", "setclipboard tidak tersedia", 2)
         end
     end
-})
+end)
 
-DevTab:CreateSection("Copy Data Logger")
-CopyLogInputs.Position = DevTab:CreateInput({
-    Name = "Position (x, y, z)",
-    CurrentValue = CopyLogFields.Position,
-    Callback = function(v)
-        CopyLogFields.Position = v
-    end
-})
-CopyLogInputs.CamCFrame = DevTab:CreateInput({
-    Name = "Camera CFrame (12 nums)",
-    CurrentValue = CopyLogFields.CamCFrame,
-    Callback = function(v)
-        CopyLogFields.CamCFrame = v
-    end
-})
-CopyLogInputs.CamFocus = DevTab:CreateInput({
-    Name = "Camera Focus (12 nums)",
-    CurrentValue = CopyLogFields.CamFocus,
-    Callback = function(v)
-        CopyLogFields.CamFocus = v
-    end
-})
-CopyLogInputs.CamFOV = DevTab:CreateInput({
-    Name = "Camera FOV",
-    CurrentValue = CopyLogFields.CamFOV,
-    Callback = function(v)
-        CopyLogFields.CamFOV = v
-    end
-})
-CopyLogInputs.CamType = DevTab:CreateInput({
-    Name = "Camera Type",
-    CurrentValue = CopyLogFields.CamType,
-    Callback = function(v)
-        CopyLogFields.CamType = v
-    end
-})
-CopyLogInputs.CamZoom = DevTab:CreateInput({
-    Name = "Camera Zoom",
-    CurrentValue = CopyLogFields.CamZoom,
-    Callback = function(v)
-        CopyLogFields.CamZoom = v
-    end
-})
-CopyLogInputs.CamMinZoom = DevTab:CreateInput({
-    Name = "Min Zoom",
-    CurrentValue = CopyLogFields.CamMinZoom,
-    Callback = function(v)
-        CopyLogFields.CamMinZoom = v
-    end
-})
-CopyLogInputs.CamMaxZoom = DevTab:CreateInput({
-    Name = "Max Zoom",
-    CurrentValue = CopyLogFields.CamMaxZoom,
-    Callback = function(v)
-        CopyLogFields.CamMaxZoom = v
-    end
-})
-CopyLogInputs.CamMode = DevTab:CreateInput({
-    Name = "Camera Mode",
-    CurrentValue = CopyLogFields.CamMode,
-    Callback = function(v)
-        CopyLogFields.CamMode = v
-    end
-})
+CopyLogInputs.Position = createInput(State.DevSections.CopyData, "Position (x, y, z)", nil, CopyLogFields.Position, function(v)
+    CopyLogFields.Position = v
+end)
+CopyLogInputs.CamCFrame = createInput(State.DevSections.CopyData, "Camera CFrame (12 nums)", nil, CopyLogFields.CamCFrame, function(v)
+    CopyLogFields.CamCFrame = v
+end)
+CopyLogInputs.CamFocus = createInput(State.DevSections.CopyData, "Camera Focus (12 nums)", nil, CopyLogFields.CamFocus, function(v)
+    CopyLogFields.CamFocus = v
+end)
+CopyLogInputs.CamFOV = createInput(State.DevSections.CopyData, "Camera FOV", nil, CopyLogFields.CamFOV, function(v)
+    CopyLogFields.CamFOV = v
+end)
+CopyLogInputs.CamType = createInput(State.DevSections.CopyData, "Camera Type", nil, CopyLogFields.CamType, function(v)
+    CopyLogFields.CamType = v
+end)
+CopyLogInputs.CamZoom = createInput(State.DevSections.CopyData, "Camera Zoom", nil, CopyLogFields.CamZoom, function(v)
+    CopyLogFields.CamZoom = v
+end)
+CopyLogInputs.CamMinZoom = createInput(State.DevSections.CopyData, "Min Zoom", nil, CopyLogFields.CamMinZoom, function(v)
+    CopyLogFields.CamMinZoom = v
+end)
+CopyLogInputs.CamMaxZoom = createInput(State.DevSections.CopyData, "Max Zoom", nil, CopyLogFields.CamMaxZoom, function(v)
+    CopyLogFields.CamMaxZoom = v
+end)
+CopyLogInputs.CamMode = createInput(State.DevSections.CopyData, "Camera Mode", nil, CopyLogFields.CamMode, function(v)
+    CopyLogFields.CamMode = v
+end)
 
-DevTab:CreateButton({
-    Name = "Test Teleport From Fields",
-    Callback = function()
-        local data = buildDataFromCopyLog()
-        if not data.position then
-            notify("Test Teleport", "Position tidak valid. Format: x, y, z", 3)
-            return
-        end
-        teleportWithData(data)
+createButton(State.DevSections.CopyData, "Test Teleport From Fields", function()
+    local data = buildDataFromCopyLog()
+    if not data.position then
+        notify("Test Teleport", "Position tidak valid. Format: x, y, z", 3)
+        return
     end
-})
-
-DevTab:CreateSection("Action Logger")
+    teleportWithData(data)
+end)
 
 local LogActions = false
 
-DevTab:CreateToggle({
-    Name = "Enable Action Logger",
-    CurrentValue = false,
-    Flag = "ActionLogger",
-    Callback = function(Value)
-        LogActions = Value
-    end
-})
+createToggle(State.DevSections.Action, "Enable Action Logger", "ActionLogger", false, function(Value)
+    LogActions = Value
+end)
 
 trackConnection(Mouse.Button1Down:Connect(function()
     if LogActions then
@@ -2800,7 +4780,6 @@ end))
 -- =====================================================
 -- CURRENCY TRACKER (Billboard / HUD Scan)
 -- =====================================================
-DevTab:CreateSection("Currency Tracker")
 
 local CurrencyNames = {
     "Sunite",
@@ -2835,7 +4814,7 @@ for i, name in ipairs(CurrencyNames) do
     CurrencyNamesLower[i] = string.lower(name)
 end
 
-local CurrencyContainer = DevTab:CreateContainer(170)
+local CurrencyContainer = createContainer(State.DevSections.Currency, 170)
 local CurrencyTitle = Instance.new("TextLabel")
 CurrencyTitle.Size = UDim2.new(1, 0, 0, 18)
 CurrencyTitle.BackgroundTransparency = 1
@@ -3032,66 +5011,55 @@ local function attachCurrencyAutoMode()
     end)
 end
 
-DevTab:CreateToggle({
-    Name = "Auto Scan (Live)",
-    CurrentValue = false,
-    Callback = function(v)
-        CurrencyScanEnabled = v
-        if CurrencyScanEnabled then
-            if CurrencyScanConn then
-                CurrencyScanConn:Disconnect()
-            end
-            CurrencyScanAccum = 0
-            CurrencyUpdateAccum = 0
-            scanOnce()
-            updateCurrencyRows()
-            CurrencyScanConn = RunService.Heartbeat:Connect(function(dt)
-                CurrencyScanAccum += dt
-                CurrencyUpdateAccum += dt
-                if CurrencyUpdateAccum >= CurrencyUpdateInterval then
-                    CurrencyUpdateAccum = 0
-                    updateCurrencyRows()
-                end
-                if CurrencyAutoMode and (isCurrencyMapEmpty() or hasInvalidCurrencyMap()) then
-                    CurrencyScanAccum = 0
-                    scanOnce()
-                elseif CurrencyScanAccum >= CurrencyScanInterval then
-                    CurrencyScanAccum = 0
-                    scanOnce()
-                end
-            end)
-            trackConnection(CurrencyScanConn)
-        else
-            if CurrencyScanConn then
-                CurrencyScanConn:Disconnect()
-                CurrencyScanConn = nil
-            end
+createToggle(State.DevSections.Currency, "Auto Scan (Live)", nil, false, function(v)
+    CurrencyScanEnabled = v
+    if CurrencyScanEnabled then
+        if CurrencyScanConn then
+            CurrencyScanConn:Disconnect()
         end
-    end
-})
-
-DevTab:CreateButton({
-    Name = "Re Full Scan",
-    Callback = function()
+        CurrencyScanAccum = 0
+        CurrencyUpdateAccum = 0
         scanOnce()
         updateCurrencyRows()
-    end
-})
-
-DevTab:CreateToggle({
-    Name = "Auto Mode (Event Driven)",
-    CurrentValue = false,
-    Callback = function(v)
-        CurrencyAutoMode = v
-        if CurrencyAutoMode then
-            attachCurrencyAutoMode()
-        else
-            clearCurrencyAutoConns()
+        CurrencyScanConn = RunService.Heartbeat:Connect(function(dt)
+            CurrencyScanAccum += dt
+            CurrencyUpdateAccum += dt
+            if CurrencyUpdateAccum >= CurrencyUpdateInterval then
+                CurrencyUpdateAccum = 0
+                updateCurrencyRows()
+            end
+            if CurrencyAutoMode and (isCurrencyMapEmpty() or hasInvalidCurrencyMap()) then
+                CurrencyScanAccum = 0
+                scanOnce()
+            elseif CurrencyScanAccum >= CurrencyScanInterval then
+                CurrencyScanAccum = 0
+                scanOnce()
+            end
+        end)
+        trackConnection(CurrencyScanConn)
+    else
+        if CurrencyScanConn then
+            CurrencyScanConn:Disconnect()
+            CurrencyScanConn = nil
         end
     end
-})
+end)
 
-do
+createButton(State.DevSections.Currency, "Re Full Scan", function()
+    scanOnce()
+    updateCurrencyRows()
+end)
+
+createToggle(State.DevSections.Currency, "Auto Mode (Event Driven)", nil, false, function(v)
+    CurrencyAutoMode = v
+    if CurrencyAutoMode then
+        attachCurrencyAutoMode()
+    else
+        clearCurrencyAutoConns()
+    end
+end)
+
+local function initRemoteTools()
     local RemoteToolsSection = createSectionBox(DevTab:GetPage(), "Remote Tools")
     local RemoteToolsControls = {}
 
@@ -3181,12 +5149,20 @@ do
                 end
             end
 
-            if NamecallLogHandler then
-                pcall(NamecallLogHandler, self, method, args)
-            end
+    local allow = true
+    if NamecallLogHandler then
+        local ok, res = pcall(NamecallLogHandler, self, method, args)
+        if ok and res == false then
+            allow = false
+        end
+    end
 
-            return old(self, ...)
-        end)
+    if not allow then
+        return nil
+    end
+
+    return old(self, ...)
+end)
         State.Mt = mt
         State.OldNamecall = old
         State.Hooked = true
@@ -3514,68 +5490,359 @@ do
     end
 
     NamecallLogHandler = function(self, method, args)
-        if not RemoteToolsEnabled or not RemoteLoggerEnabled then return end
-        if typeof(self) ~= "Instance" then return end
+        local allow = true
 
-        local class = self.ClassName
-        if not (class == "RemoteEvent" or class == "RemoteFunction" or class == "BindableEvent" or class == "BindableFunction" or class == "UnreliableRemoteEvent") then
-            return
-        end
-        if method == "FireServer" then
-            local label = ":FireServer"
-            if class == "UnreliableRemoteEvent" then
-                label = ":FireServer (Unreliable)"
+        if allow and RemoteToolsEnabled and RemoteLoggerEnabled then
+            if typeof(self) ~= "Instance" then return allow end
+
+            local class = self.ClassName
+            if not (class == "RemoteEvent" or class == "RemoteFunction" or class == "BindableEvent" or class == "BindableFunction" or class == "UnreliableRemoteEvent") then
+                return allow
             end
-            State.C2SLastCapture = self:GetFullName() .. " " .. label .. "\n" .. table.concat((function()
-                local out = {}
-                for i, v in ipairs(args) do
-                    out[#out + 1] = "[" .. i .. "] " .. serializeValue(v)
+            if method == "FireServer" then
+                local label = ":FireServer"
+                if class == "UnreliableRemoteEvent" then
+                    label = ":FireServer (Unreliable)"
                 end
-                return out
-            end)(), "\n")
-            if State.C2SCaptureArmed then
-                if os.clock() > State.C2SCaptureExpires then
-                    State.C2SCaptureArmed = false
-                else
-                    State.C2SCaptureArmed = false
-                    if setclipboard then
-                        pcall(setclipboard, State.C2SLastCapture)
+                State.C2SLastCapture = self:GetFullName() .. " " .. label .. "\n" .. table.concat((function()
+                    local out = {}
+                    for i, v in ipairs(args) do
+                        out[#out + 1] = "[" .. i .. "] " .. serializeValue(v)
                     end
-                    notify("C2S Captured", "Captured & copied", 3)
-                end
-            end
-            addLogEntry(label, self:GetFullName(), args)
-            return
-        end
-        if method == "InvokeServer" then
-            State.C2SLastCapture = self:GetFullName() .. " :InvokeServer\n" .. table.concat((function()
-                local out = {}
-                for i, v in ipairs(args) do
-                    out[#out + 1] = "[" .. i .. "] " .. serializeValue(v)
-                end
-                return out
-            end)(), "\n")
-            if State.C2SCaptureArmed then
-                if os.clock() > State.C2SCaptureExpires then
-                    State.C2SCaptureArmed = false
-                else
-                    State.C2SCaptureArmed = false
-                    if setclipboard then
-                        pcall(setclipboard, State.C2SLastCapture)
+                    return out
+                end)(), "\n")
+                if State.C2SCaptureArmed then
+                    if os.clock() > State.C2SCaptureExpires then
+                        State.C2SCaptureArmed = false
+                    else
+                        State.C2SCaptureArmed = false
+                        if setclipboard then
+                            pcall(setclipboard, State.C2SLastCapture)
+                        end
+                        notify("C2S Captured", "Captured & copied", 3)
                     end
-                    notify("C2S Captured", "Captured & copied", 3)
                 end
+                addLogEntry(label, self:GetFullName(), args)
+                return allow
             end
-            addLogEntry(":InvokeServer", self:GetFullName(), args)
-            return
+            if method == "InvokeServer" then
+                State.C2SLastCapture = self:GetFullName() .. " :InvokeServer\n" .. table.concat((function()
+                    local out = {}
+                    for i, v in ipairs(args) do
+                        out[#out + 1] = "[" .. i .. "] " .. serializeValue(v)
+                    end
+                    return out
+                end)(), "\n")
+                if State.C2SCaptureArmed then
+                    if os.clock() > State.C2SCaptureExpires then
+                        State.C2SCaptureArmed = false
+                    else
+                        State.C2SCaptureArmed = false
+                        if setclipboard then
+                            pcall(setclipboard, State.C2SLastCapture)
+                        end
+                        notify("C2S Captured", "Captured & copied", 3)
+                    end
+                end
+                addLogEntry(":InvokeServer", self:GetFullName(), args)
+                return allow
+            end
+            if method == "Fire" then
+                addLogEntry(":Fire", self:GetFullName(), args)
+                return allow
+            end
         end
-        if method == "Fire" then
-            addLogEntry(":Fire", self:GetFullName(), args)
-            return
-        end
+
+        return allow
     end
 
     setRemoteToolsEnabled(false)
+end
+
+initRemoteTools()
+
+State.DevSections.Utility = createSectionBox(DevTab:GetPage(), "Utility Logger")
+
+State.UtilityLogger = State.UtilityLogger or {}
+State.UtilityLogger.Conns = State.UtilityLogger.Conns or {}
+State.UtilityLogger.RootConns = State.UtilityLogger.RootConns or {}
+State.UtilityLogger.Watched = State.UtilityLogger.Watched or {}
+State.UtilityLogger.WatchedAttr = State.UtilityLogger.WatchedAttr or {}
+State.UtilityLogger.Logs = State.UtilityLogger.Logs or {}
+State.UtilityLogger.MaxLogs = State.UtilityLogger.MaxLogs or 60
+State.UtilityLogger.Names = State.UtilityLogger.Names or {}
+State.UtilityLogger.Enabled = Config.UtilityLoggerEnabled == true
+State.UtilityLogger.TrackValues = Config.UtilityTrackValues ~= false
+State.UtilityLogger.TrackAttributes = Config.UtilityTrackAttributes ~= false
+
+State.UtilityLogger.ParseNames = State.UtilityLogger.ParseNames or function(text)
+    local out = {}
+    for token in string.gmatch(text or "", "([^,]+)") do
+        local t = string.lower(string.gsub(token, "^%s*(.-)%s*$", "%1"))
+        if t ~= "" then
+            out[#out + 1] = t
+        end
+    end
+    return out
+end
+
+State.UtilityLogger.Matches = State.UtilityLogger.Matches or function(name)
+    if not name then
+        return false
+    end
+    local list = State.UtilityLogger.Names or {}
+    if #list == 0 then
+        return false
+    end
+    local lower = string.lower(name)
+    for _, token in ipairs(list) do
+        if string.find(lower, token, 1, true) then
+            return true
+        end
+    end
+    return false
+end
+
+State.UtilityLogger.ClearConns = State.UtilityLogger.ClearConns or function()
+    for _, conn in ipairs(State.UtilityLogger.Conns) do
+        pcall(function()
+            conn:Disconnect()
+        end)
+    end
+    State.UtilityLogger.Conns = {}
+    for _, conn in ipairs(State.UtilityLogger.RootConns) do
+        pcall(function()
+            conn:Disconnect()
+        end)
+    end
+    State.UtilityLogger.RootConns = {}
+    State.UtilityLogger.Watched = {}
+    State.UtilityLogger.WatchedAttr = {}
+end
+
+State.UtilityLogger.AddLog = State.UtilityLogger.AddLog or function(text)
+    local ui = State.UtilityLogger.UI
+    if not ui or not ui.Scroll then
+        return
+    end
+    if #State.UtilityLogger.Logs >= State.UtilityLogger.MaxLogs then
+        if State.UtilityLogger.Logs[1] and State.UtilityLogger.Logs[1].Frame then
+            State.UtilityLogger.Logs[1].Frame:Destroy()
+        end
+        table.remove(State.UtilityLogger.Logs, 1)
+    end
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(1, 0, 0, 0)
+    frame.AutomaticSize = Enum.AutomaticSize.Y
+    frame.BorderSizePixel = 0
+    frame.Parent = ui.Scroll
+    registerTheme(frame, "BackgroundColor3", "Main")
+
+    local pad = Instance.new("UIPadding")
+    pad.PaddingTop = UDim.new(0, 6)
+    pad.PaddingBottom = UDim.new(0, 6)
+    pad.PaddingLeft = UDim.new(0, 8)
+    pad.PaddingRight = UDim.new(0, 8)
+    pad.Parent = frame
+
+    local body = Instance.new("TextLabel")
+    body.Size = UDim2.new(1, 0, 0, 0)
+    body.AutomaticSize = Enum.AutomaticSize.Y
+    body.BackgroundTransparency = 1
+    body.Font = Enum.Font.Gotham
+    body.TextSize = 12
+    body.TextWrapped = true
+    body.TextXAlignment = Enum.TextXAlignment.Left
+    body.TextYAlignment = Enum.TextYAlignment.Top
+    body.Text = text
+    body.Parent = frame
+    registerTheme(body, "TextColor3", "Muted")
+
+    State.UtilityLogger.Logs[#State.UtilityLogger.Logs + 1] = {Frame = frame, Text = text}
+end
+
+State.UtilityLogger.AttachValue = State.UtilityLogger.AttachValue or function(inst)
+    if not State.UtilityLogger.TrackValues then
+        return
+    end
+    if not inst or not inst:IsA("ValueBase") then
+        return
+    end
+    if not State.UtilityLogger.Matches(inst.Name) then
+        return
+    end
+    if State.UtilityLogger.Watched[inst] then
+        return
+    end
+    State.UtilityLogger.Watched[inst] = true
+    State.UtilityLogger.AddLog("[VALUE] " .. inst:GetFullName() .. " = " .. tostring(inst.Value))
+    local conn = inst.Changed:Connect(function()
+        State.UtilityLogger.AddLog("[VALUE] " .. inst:GetFullName() .. " = " .. tostring(inst.Value))
+    end)
+    State.UtilityLogger.Conns[#State.UtilityLogger.Conns + 1] = conn
+end
+
+State.UtilityLogger.AttachAttributes = State.UtilityLogger.AttachAttributes or function(inst)
+    if not State.UtilityLogger.TrackAttributes then
+        return
+    end
+    if not inst then
+        return
+    end
+    local attrs = inst:GetAttributes()
+    for name, _ in pairs(attrs) do
+        if State.UtilityLogger.Matches(name) then
+            State.UtilityLogger.WatchedAttr[inst] = State.UtilityLogger.WatchedAttr[inst] or {}
+            if not State.UtilityLogger.WatchedAttr[inst][name] then
+                State.UtilityLogger.WatchedAttr[inst][name] = true
+                State.UtilityLogger.AddLog("[ATTR] " .. inst:GetFullName() .. "." .. name .. " = " .. tostring(inst:GetAttribute(name)))
+                local conn = inst:GetAttributeChangedSignal(name):Connect(function()
+                    State.UtilityLogger.AddLog("[ATTR] " .. inst:GetFullName() .. "." .. name .. " = " .. tostring(inst:GetAttribute(name)))
+                end)
+                State.UtilityLogger.Conns[#State.UtilityLogger.Conns + 1] = conn
+            end
+        end
+    end
+end
+
+State.UtilityLogger.WatchInstance = State.UtilityLogger.WatchInstance or function(inst)
+    if not inst then
+        return
+    end
+    State.UtilityLogger.AttachValue(inst)
+    State.UtilityLogger.AttachAttributes(inst)
+end
+
+State.UtilityLogger.ScanRoot = State.UtilityLogger.ScanRoot or function(root)
+    if not root then
+        return
+    end
+    State.UtilityLogger.WatchInstance(root)
+    for _, inst in ipairs(root:GetDescendants()) do
+        State.UtilityLogger.WatchInstance(inst)
+    end
+end
+
+State.UtilityLogger.AttachRoot = State.UtilityLogger.AttachRoot or function(root)
+    if not root then
+        return
+    end
+    State.UtilityLogger.ScanRoot(root)
+    local conn = root.DescendantAdded:Connect(function(inst)
+        State.UtilityLogger.WatchInstance(inst)
+    end)
+    State.UtilityLogger.RootConns[#State.UtilityLogger.RootConns + 1] = conn
+end
+
+State.UtilityLogger.Start = State.UtilityLogger.Start or function()
+    State.UtilityLogger.ClearConns()
+    if #State.UtilityLogger.Names == 0 then
+        State.UtilityLogger.AddLog("[INFO] Isi Track Names terlebih dulu.")
+    end
+    State.UtilityLogger.AttachRoot(LP)
+    State.UtilityLogger.AttachRoot(LP.Character)
+    State.UtilityLogger.AttachRoot(LP.PlayerGui)
+    local conn = LP.CharacterAdded:Connect(function()
+        if State.UtilityLogger.Enabled then
+            State.UtilityLogger.AttachRoot(LP.Character)
+        end
+    end)
+    State.UtilityLogger.RootConns[#State.UtilityLogger.RootConns + 1] = conn
+end
+
+State.UtilityLogger.Stop = State.UtilityLogger.Stop or function()
+    State.UtilityLogger.ClearConns()
+end
+
+State.UtilityLogger.Refresh = State.UtilityLogger.Refresh or function()
+    if not State.UtilityLogger.Enabled then
+        return
+    end
+    State.UtilityLogger.Start()
+end
+
+createParagraph(
+    State.DevSections.Utility,
+    "Utility Logger",
+    "Logger untuk ValueObject/Attribute berdasarkan nama (pakai koma untuk banyak nama)."
+)
+
+createInput(State.DevSections.Utility, "Track Names (comma)", "UtilityTrackNames", Config.UtilityTrackNames or "", function(v)
+    State.UtilityLogger.Names = State.UtilityLogger.ParseNames(v or "")
+    State.UtilityLogger.Refresh()
+end)
+
+createToggle(State.DevSections.Utility, "Enable Utility Logger", "UtilityLoggerEnabled", Config.UtilityLoggerEnabled, function(v)
+    State.UtilityLogger.Enabled = v == true
+    if State.UtilityLogger.Enabled then
+        State.UtilityLogger.Start()
+    else
+        State.UtilityLogger.Stop()
+    end
+end)
+
+createToggle(State.DevSections.Utility, "Track ValueObjects", "UtilityTrackValues", Config.UtilityTrackValues, function(v)
+    State.UtilityLogger.TrackValues = v == true
+    State.UtilityLogger.Refresh()
+end)
+
+createToggle(State.DevSections.Utility, "Track Attributes", "UtilityTrackAttributes", Config.UtilityTrackAttributes, function(v)
+    State.UtilityLogger.TrackAttributes = v == true
+    State.UtilityLogger.Refresh()
+end)
+
+State.UtilityLogger.UI = State.UtilityLogger.UI or {}
+State.UtilityLogger.UI.Container = createContainer(State.DevSections.Utility, 180)
+State.UtilityLogger.UI.Title = Instance.new("TextLabel")
+State.UtilityLogger.UI.Title.Size = UDim2.new(1, 0, 0, 18)
+State.UtilityLogger.UI.Title.BackgroundTransparency = 1
+State.UtilityLogger.UI.Title.Font = Enum.Font.GothamSemibold
+State.UtilityLogger.UI.Title.TextSize = 12
+State.UtilityLogger.UI.Title.TextXAlignment = Enum.TextXAlignment.Left
+State.UtilityLogger.UI.Title.Text = "Logs (Value/Attribute)"
+State.UtilityLogger.UI.Title.Parent = State.UtilityLogger.UI.Container
+registerTheme(State.UtilityLogger.UI.Title, "TextColor3", "Text")
+
+State.UtilityLogger.UI.Scroll = Instance.new("ScrollingFrame")
+State.UtilityLogger.UI.Scroll.Size = UDim2.new(1, 0, 1, -22)
+State.UtilityLogger.UI.Scroll.Position = UDim2.new(0, 0, 0, 20)
+State.UtilityLogger.UI.Scroll.BorderSizePixel = 0
+State.UtilityLogger.UI.Scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+State.UtilityLogger.UI.Scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+State.UtilityLogger.UI.Scroll.ScrollBarThickness = 6
+State.UtilityLogger.UI.Scroll.ScrollingDirection = Enum.ScrollingDirection.Y
+State.UtilityLogger.UI.Scroll.ClipsDescendants = true
+State.UtilityLogger.UI.Scroll.Parent = State.UtilityLogger.UI.Container
+registerTheme(State.UtilityLogger.UI.Scroll, "BackgroundColor3", "Panel")
+
+State.UtilityLogger.UI.List = Instance.new("UIListLayout")
+State.UtilityLogger.UI.List.Padding = UDim.new(0, 6)
+State.UtilityLogger.UI.List.SortOrder = Enum.SortOrder.LayoutOrder
+State.UtilityLogger.UI.List.Parent = State.UtilityLogger.UI.Scroll
+
+trackConnection(State.UtilityLogger.UI.List:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+    State.UtilityLogger.UI.Scroll.CanvasSize = UDim2.new(0, 0, 0, State.UtilityLogger.UI.List.AbsoluteContentSize.Y + 12)
+end))
+
+State.UtilityLogger.UI.Pad = Instance.new("UIPadding")
+State.UtilityLogger.UI.Pad.PaddingTop = UDim.new(0, 6)
+State.UtilityLogger.UI.Pad.PaddingBottom = UDim.new(0, 6)
+State.UtilityLogger.UI.Pad.PaddingLeft = UDim.new(0, 6)
+State.UtilityLogger.UI.Pad.PaddingRight = UDim.new(0, 6)
+State.UtilityLogger.UI.Pad.Parent = State.UtilityLogger.UI.Scroll
+
+createButton(State.DevSections.Utility, "Clear Logs", function()
+    for i = #State.UtilityLogger.Logs, 1, -1 do
+        if State.UtilityLogger.Logs[i].Frame then
+            State.UtilityLogger.Logs[i].Frame:Destroy()
+        end
+        table.remove(State.UtilityLogger.Logs, i)
+    end
+end)
+
+State.UtilityLogger.Names = State.UtilityLogger.ParseNames(Config.UtilityTrackNames or "")
+if State.UtilityLogger.Enabled then
+    State.UtilityLogger.Start()
 end
 local function hookRemote(obj)
     if not addLogEntry then
@@ -3646,6 +5913,8 @@ setRemoteHooking = function(enabled)
 end
 
 -- =====================================================
+
+-- =====================================================
 -- =====================================================
 -- [HEAD] SETTINGS TAB
 -- =====================================================
@@ -3655,7 +5924,7 @@ SettingsTab:CreateSection("UI Settings")
 
 SettingsTab:CreateDropdown({
     Name = "Theme",
-    Options = {"Default", "Dark", "Light", "Ocean"},
+    Options = {"Default", "Dark", "Light", "Ocean", "Mint", "Sunset", "Aurora"},
     CurrentOption = "Default",
     Flag = "Theme",
     Callback = function(Theme)
@@ -3664,6 +5933,53 @@ SettingsTab:CreateDropdown({
         saveConfig()
     end
 })
+
+SettingsTab:CreateDropdown({
+    Name = "Font",
+    Options = {"Gotham", "SourceSans", "Arial", "Code"},
+    CurrentOption = "Gotham",
+    Flag = "Font",
+    Callback = function(fontName)
+        Config.Font = fontName
+        if State.Fonts and State.Fonts.Apply then
+            State.Fonts.Apply()
+        end
+        saveConfig()
+    end
+})
+
+SettingsTab:CreateSection("Log")
+AutoBuyLogState.ToggleControl = SettingsTab:CreateToggle({
+    Name = "Show AutoBuy Log UI",
+    Flag = "AutoBuyLogEnabled",
+    CurrentValue = Config.AutoBuyLogEnabled,
+    Callback = function(v)
+        setAutoBuyLogToggle(v)
+        if v then
+            updateAutoBuyLogUI()
+        else
+            destroyAutoBuyLogUI()
+        end
+    end
+})
+
+updateAutoBuyLogUI()
+
+State.FullAutomationLog.ToggleControl = SettingsTab:CreateToggle({
+    Name = "Show Full Automation Log UI",
+    Flag = "FullAutomationLogEnabled",
+    CurrentValue = Config.FullAutomationLogEnabled,
+    Callback = function(v)
+        State.FullAutomationLog.SetToggle(v)
+        if v then
+            State.FullAutomationLog.UpdateUI()
+        else
+            State.FullAutomationLog.DestroyUI()
+        end
+    end
+})
+
+State.FullAutomationLog.UpdateUI()
 
 SettingsTab:CreateSection("Auto Reload")
 SettingsTab:CreateParagraph({
@@ -3761,11 +6077,11 @@ AutoReloadUIReady = true
 
 createTabDivider()
 State.Tabs = State.Tabs or {}
-State.Tabs.RuneLocation = createTab("Rune Location")
+State.Tabs.RuneLocation = createTab("Fast Teleport")
 
 local function createVirtualButtonRow(parent, items)
     local row = Instance.new("Frame")
-    row.Size = UDim2.new(1, 0, 0, 28)
+    row.Size = UDim2.new(1, 0, 0, 32)
     row.BorderSizePixel = 0
     row.Parent = parent
     row.BackgroundTransparency = 1
@@ -3783,11 +6099,25 @@ local function createVirtualButtonRow(parent, items)
         btn.Font = Enum.Font.Gotham
         btn.TextSize = 11
         btn.Text = tostring(item.Label)
+        btn.TextScaled = true
+        btn.TextWrapped = true
         btn.AutoButtonColor = false
         btn.Parent = row
         registerTheme(btn, "BackgroundColor3", "Main")
         registerTheme(btn, "TextColor3", "Text")
         addCorner(btn, 6)
+
+        local pad = Instance.new("UIPadding")
+        pad.PaddingLeft = UDim.new(0, 4)
+        pad.PaddingRight = UDim.new(0, 4)
+        pad.PaddingTop = UDim.new(0, 2)
+        pad.PaddingBottom = UDim.new(0, 2)
+        pad.Parent = btn
+
+        local sizeClamp = Instance.new("UITextSizeConstraint")
+        sizeClamp.MinTextSize = 8
+        sizeClamp.MaxTextSize = 12
+        sizeClamp.Parent = btn
 
         btn.MouseButton1Click:Connect(function()
             teleportWithData(item.Data)
@@ -3838,15 +6168,186 @@ local function initRuneLocationTab()
         "Valentine Event"
     }
 
+    local function cleanWorldName(name)
+        local out = tostring(name or "")
+        out = out:gsub("%s*World%s*$", "")
+        out = out:gsub("%s*Event%s*$", "")
+        return out
+    end
+
+    local function isEventWorld(name)
+        local n = tostring(name or "")
+        if string.find(n, "Event", 1, true) then
+            return true
+        end
+        return n == "Halloween" or n == "Thanksgiving"
+    end
+
+    local worldList = {}
+    local eventList = {}
     for _, worldName in ipairs(worldOrder) do
-        local section = createSectionBox(page, worldName)
         local runeList = State.RuneTeleportData[worldName] or {}
-        if #runeList == 0 then
-            createParagraph(section, "Rune", "Tidak ada data rune untuk world ini.")
-        else
-            createVirtualGrid(section, runeList)
+        local baseName = cleanWorldName(worldName)
+        local total = #runeList
+        for i, item in ipairs(runeList) do
+            local suffix = (total > 1) and (" Rune " .. tostring(i)) or " Rune"
+            local entry = {
+                Label = tostring(baseName) .. suffix,
+                Data = item.Data
+            }
+            if isEventWorld(worldName) then
+                eventList[#eventList + 1] = entry
+            else
+                worldList[#worldList + 1] = entry
+            end
         end
     end
+
+    local section = createSectionBox(page, "Rune Teleport")
+    local worldSub = createSubSectionBox(section, "World Rune")
+    local eventSub = createSubSectionBox(section, "Event Rune")
+
+    if #worldList == 0 then
+        createParagraph(worldSub, "World Rune", "Tidak ada rune untuk World.")
+    else
+        createVirtualGrid(worldSub, worldList)
+    end
+
+    if #eventList == 0 then
+        createParagraph(eventSub, "Event Rune", "Tidak ada rune untuk Event.")
+    else
+        createVirtualGrid(eventSub, eventList)
+    end
+
+    local potionSection = createSectionBox(page, "Potion Shop")
+    local potionList = {
+        {Label = "Cyber Shop (Cyber)", Data = makeData(
+            Vector3.new(5754.847, 15.482, 2.240),
+            CFrame.new(5740.769043, 23.500961, 14.060647, 0.643061757, 0.255947262, -0.721777439, 0.000000000, 0.942496657, 0.334215790, 0.765814364, -0.214921400, 0.606083512),
+            CFrame.new(5754.846680, 16.982416, 2.239594, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+            70.000,
+            Enum.CameraType.Custom,
+            19.504065,
+            0.500,
+            40.000
+        )},
+        {Label = "Potion Shop (3M)", Data = makeData(
+            Vector3.new(-294.845, 15.991, 2070.316),
+            CFrame.new(-310.442261, 28.236837, 2065.660645, -0.286014646, 0.527920187, -0.799684823, 0.000000000, 0.834547877, 0.550935388, 0.958225250, 0.157575592, -0.238692909),
+            CFrame.new(-294.845215, 17.491394, 2070.316162, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+            70.000,
+            Enum.CameraType.Custom,
+            19.504005,
+            0.500,
+            40.000
+        )}
+    }
+    createVirtualGrid(potionSection, potionList)
+
+    local statSection = createSectionBox(page, "Stat Upgrade")
+    local statList = {
+        {Label = "Ticket Shop (Forest)", Data = makeData(
+            Vector3.new(-13.439, 19.201, 85.278),
+            CFrame.new(5.131074, 27.627468, 90.108078, 0.251725823, -0.328588486, 0.910309672, 0.000000000, 0.940598249, 0.339521557, -0.967798591, -0.085466340, 0.236772880),
+            CFrame.new(-13.439223, 20.701237, 85.277916, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+            70.000,
+            Enum.CameraType.Custom,
+            20.399977,
+            0.500,
+            40.000
+        )},
+        {Label = "Passive Shards Shop (Winter)", Data = makeData(
+            Vector3.new(1484.535, 18.098, 79.519),
+            CFrame.new(1497.478760, 25.320576, 85.072540, 0.394256741, -0.345924526, 0.851409376, 0.000000000, 0.926451564, 0.376413971, -0.919000268, -0.148403749, 0.365259826),
+            CFrame.new(1484.534668, 19.597879, 79.519424, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+            70.000,
+            Enum.CameraType.Custom,
+            15.203153,
+            0.500,
+            40.000
+        )},
+        {Label = "Sacrifice (Desert)", Data = makeData(
+            Vector3.new(2614.331, 14.993, 49.230),
+            CFrame.new(2619.790039, 23.690708, 37.002373, -0.913122058, -0.193005964, 0.359105527, 0.000000000, 0.880837977, 0.473417908, -0.407686234, 0.432288349, -0.804312646),
+            CFrame.new(2614.330566, 16.493240, 49.230499, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+            70.000,
+            Enum.CameraType.Custom,
+            15.203174,
+            0.500,
+            40.000
+        )},
+        {Label = "Milestones (Mines)", Data = makeData(
+            Vector3.new(3656.122, 14.492, -9.657),
+            CFrame.new(3652.164307, 20.547853, 2.567032, 0.951381981, 0.102941677, -0.290302008, 0.000000000, 0.942498028, 0.334211707, 0.308013380, -0.317963004, 0.896675706),
+            CFrame.new(3656.122070, 15.991518, -9.657419, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+            70.000,
+            Enum.CameraType.Custom,
+            13.633096,
+            0.500,
+            40.000
+        )},
+        {Label = "Relics (Ocean)", Data = makeData(
+            Vector3.new(44.049, 19.477, -2049.437),
+            CFrame.new(25.760534, 27.702478, -2050.280029, -0.046050407, 0.344470203, -0.937667131, 0.000000000, 0.938662946, 0.344836026, 0.998939157, 0.015879840, -0.043225810),
+            CFrame.new(44.048794, 20.976797, -2049.437012, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+            70.000,
+            Enum.CameraType.Custom,
+            19.503998,
+            0.500,
+            40.000
+        )},
+        {Label = "Milestone (Ocean)", Data = makeData(
+            Vector3.new(-12.070, 16.224, -1848.307),
+            CFrame.new(-10.960073, 22.344925, -1867.223633, -0.998281598, -0.013882399, 0.056931511, 0.000000000, 0.971533477, 0.236902446, -0.058599643, 0.236495346, -0.969863892),
+            CFrame.new(-12.070465, 17.724379, -1848.307373, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+            70.000,
+            Enum.CameraType.Custom,
+            19.504034,
+            0.500,
+            40.000
+        )},
+        {Label = "Rarities (Space)", Data = makeData(
+            Vector3.new(1534.464, 13.743, 2123.736),
+            CFrame.new(1536.074341, 21.832954, 2112.384033, -0.990087509, -0.069984615, 0.121773958, 0.000000000, 0.867015183, 0.498281628, -0.140451923, 0.493342429, -0.858420908),
+            CFrame.new(1534.463867, 15.243335, 2123.736328, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+            70.000,
+            Enum.CameraType.Custom,
+            13.224648,
+            0.500,
+            40.000
+        )},
+        {Label = "Milestones (Space)", Data = makeData(
+            Vector3.new(1308.464, 14.000, 1896.676),
+            CFrame.new(1321.018677, 19.640011, 1896.302368, -0.029771226, -0.312925488, 0.949310958, 0.000000000, 0.949731946, 0.313064277, -0.999556720, 0.009320308, -0.028274683),
+            CFrame.new(1308.464355, 15.499832, 1896.676270, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+            70.000,
+            Enum.CameraType.Custom,
+            13.224669,
+            0.500,
+            40.000
+        )},
+        {Label = "Milestone (Hell)", Data = makeData(
+            Vector3.new(1477.510, 7.417, 3821.921),
+            CFrame.new(1482.308716, 17.365757, 3838.832275, 0.962025285, -0.118238114, 0.246022791, 0.000000000, 0.901312768, 0.433169246, -0.272960544, -0.416719764, 0.867085576),
+            CFrame.new(1477.510254, 8.917223, 3821.920654, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+            70.000,
+            Enum.CameraType.Custom,
+            19.503996,
+            0.500,
+            40.000
+        )},
+        {Label = "Minions (3M)", Data = makeData(
+            Vector3.new(-311.161, 16.598, 2046.919),
+            CFrame.new(-322.367065, 26.889526, 2058.532227, 0.719588339, 0.332193792, -0.609786689, 0.000000000, 0.878147960, 0.478389114, 0.694400847, -0.344243228, 0.631905079),
+            CFrame.new(-311.160583, 18.097818, 2046.919312, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+            70.000,
+            Enum.CameraType.Custom,
+            18.377682,
+            0.500,
+            40.000
+        )}
+    }
+    createVirtualGrid(statSection, statList)
 end
 
 local function initWorldTabs()
@@ -3867,7 +6368,7 @@ local TeleportSection = createSectionBox(State.Tabs.Space:GetPage(), "Teleport")
 -- =====================================================
 local function createButtonRow(parent, items, onClick)
     local row = Instance.new("Frame")
-    row.Size = UDim2.new(1, 0, 0, 28)
+    row.Size = UDim2.new(1, 0, 0, 32)
     row.BorderSizePixel = 0
     row.Parent = parent
     row.BackgroundTransparency = 1
@@ -3885,12 +6386,26 @@ local function createButtonRow(parent, items, onClick)
         btn.Font = Enum.Font.Gotham
         btn.TextSize = 11
         btn.Text = item.Label
+        btn.TextScaled = true
+        btn.TextWrapped = true
         btn.AutoButtonColor = false
         btn.Parent = row
         registerTheme(btn, "BackgroundColor3", "Main")
         registerTheme(btn, "TextColor3", "Text")
         addCorner(btn, 6)
         TeleportButtons[#TeleportButtons + 1] = btn
+
+        local pad = Instance.new("UIPadding")
+        pad.PaddingLeft = UDim.new(0, 4)
+        pad.PaddingRight = UDim.new(0, 4)
+        pad.PaddingTop = UDim.new(0, 2)
+        pad.PaddingBottom = UDim.new(0, 2)
+        pad.Parent = btn
+
+        local sizeClamp = Instance.new("UITextSizeConstraint")
+        sizeClamp.MinTextSize = 8
+        sizeClamp.MaxTextSize = 12
+        sizeClamp.Parent = btn
 
         btn.MouseButton1Click:Connect(function()
             ActiveTeleportButton = btn
@@ -4861,408 +7376,55 @@ end
 
   State.InitMushroom = function()
       local MushroomAutomationSection = createSectionBox(State.MushroomTab:GetPage(), "Automation")
-      local function setControlsEnabled(controls, enabled)
-          for _, ctrl in ipairs(controls) do
-              if ctrl and ctrl.SetEnabled then
-                  ctrl:SetEnabled(enabled)
-              end
-          end
-      end
-
-      local function createListDropdownRow(parent, labelText, onToggle)
-          local frame = Instance.new("Frame")
-          frame.Size = UDim2.new(1, 0, 0, 30)
-          frame.BorderSizePixel = 0
-          frame.Parent = parent
-          registerTheme(frame, "BackgroundColor3", "Main")
-          addCorner(frame, 6)
-          addStroke(frame, "Muted", 1, 0.8)
-
-          local label = Instance.new("TextLabel")
-          label.Size = UDim2.new(1, -50, 1, 0)
-          label.BackgroundTransparency = 1
-          label.Font = Enum.Font.Gotham
-          label.TextSize = 13
-          label.TextXAlignment = Enum.TextXAlignment.Left
-          label.Text = labelText
-          label.Parent = frame
-          registerTheme(label, "TextColor3", "Text")
-
-          local btn = Instance.new("TextButton")
-          btn.Size = UDim2.new(0, 30, 0, 20)
-          btn.Position = UDim2.new(1, -35, 0.5, -10)
-          btn.BorderSizePixel = 0
-          btn.Font = Enum.Font.GothamSemibold
-          btn.TextSize = 12
-          btn.AutoButtonColor = false
-          btn.Parent = frame
-          registerTheme(btn, "BackgroundColor3", "Panel")
-          registerTheme(btn, "TextColor3", "Text")
-          addCorner(btn, 6)
-
-          local enabled = true
-          local expanded = false
-
-          local function setExpanded(state)
-              expanded = state and true or false
-              btn.Text = expanded and "v" or ">"
-          end
-
-          btn.MouseButton1Click:Connect(function()
-              if not enabled then
-                  return
-              end
-              setExpanded(not expanded)
-              if onToggle then
-                  onToggle(expanded)
-              end
-          end)
-
-          setExpanded(false)
-
-          return {
-              SetEnabled = function(_, value)
-                  enabled = value and true or false
-                  label.TextTransparency = enabled and 0 or 0.4
-                  btn.TextTransparency = enabled and 0 or 0.4
-              end,
-              SetExpanded = function(_, value)
-                  setExpanded(value)
-              end,
-              Frame = frame
+      setupAutoBuyGroup(MushroomAutomationSection, {
+          GroupKey = "Mushroom World",
+          DisplayName = "Auto Buy Shop",
+          ModeToggleName = "Mode: Upgrade All",
+          SpeedLabel = "Click Speed (sec)",
+          CooldownKey = "MushroomAutoBuy",
+          DefaultCooldown = 0.6,
+          Shops = {
+              {
+                  Key = "Fungus",
+                  DisplayName = "Fungus Shop",
+                  ShopName = "Fungus",
+                  Items = {
+                      "Fungus Multiplier",
+                      "Fungus Multiplier II",
+                      "Mushrooms Multiplier",
+                      "Score Multiplier",
+                      "Score Multiplier II",
+                      "Score Multiplier III",
+                      "Mushroom Plant Capacity",
+                      "Plant Max Size Cap",
+                      "Mushroom Growth Speed",
+                      "Mushroom Inventory",
+                      "Spores Multiplier",
+                      "Glowy Crystals Multiplier",
+                      "Magic Energy Multiplier",
+                      "Extra Fungus Multiplier",
+                      "Spores Multiplier II",
+                      "Glowy Crystals Multiplier II"
+                  }
+              },
+              {
+                  Key = "Spores",
+                  DisplayName = "Spores Shop",
+                  ShopName = "Spores",
+                  Items = {
+                      "Spores Multiplier",
+                      "Fungus Multiplier",
+                      "Score Multiplier",
+                      "Mushrooms Multiplier",
+                      "Mushroom Inventory",
+                      "Plant Max Size Cap",
+                      "Glowy Crystal Multiplier",
+                      "Magic Energy Multiplier",
+                      "Extra Spores Multiplier"
+                  }
+              }
           }
-      end
-
-      local FungusAutoEnabled = false
-      local FungusAutoConn = nil
-      local FungusAutoAccum = 0
-      local FungusAutoInterval = 0.25
-      local FungusDefaultClickCooldown = 0.6
-      local FungusLastClick = 0
-      local FungusUseUpgradeAll = true
-      local FungusMaxed = {}
-      local FungusPromptConn = nil
-      local FungusSkipMaxed = true
-      local FungusItemEnabled = {}
-      State.FungusAutoIndex = 1
-      State.FungusAutoOrder = {
-          "Fungus Multiplier",
-          "Fungus Multiplier II",
-          "Mushrooms Multiplier",
-          "Score Multiplier",
-          "Score Multiplier II",
-          "Score Multiplier III",
-          "Mushroom Plant Capacity",
-          "Plant Max Size Cap",
-          "Mushroom Growth Speed",
-          "Mushroom Inventory",
-          "Spores Multiplier",
-          "Glowy Crystals Multiplier",
-          "Magic Energy Multiplier",
-          "Extra Fungus Multiplier",
-          "Spores Multiplier II",
-          "Glowy Crystals Multiplier II"
-      }
-
-      setGlobalClickCooldown("FungusShop", FungusDefaultClickCooldown)
-      for _, name in ipairs(State.FungusAutoOrder) do
-          FungusItemEnabled[name] = true
-      end
-
-      local function attachFungusPromptListener()
-          if FungusPromptConn then
-              return
-          end
-          local ok, remote = pcall(function()
-              return game:GetService("ReplicatedStorage").Packages.Knit.Services.RemotesService.RE.PromptNotification
-          end)
-          if not ok or not remote or not remote:IsA("RemoteEvent") then
-              return
-          end
-          FungusPromptConn = remote.OnClientEvent:Connect(function(_, msg)
-              if not FungusAutoEnabled then
-                  return
-              end
-              if type(msg) ~= "string" then
-                  return
-              end
-              local lower = string.lower(msg)
-              if not string.find(lower, "already reached max upgrade", 1, true) then
-                  return
-              end
-              for _, name in ipairs(State.FungusAutoOrder) do
-                  if string.find(lower, string.lower(name), 1, true) then
-                      FungusMaxed[name] = true
-                  end
-              end
-          end)
-          trackConnection(FungusPromptConn)
-      end
-
-      local function detachFungusPromptListener()
-          if FungusPromptConn then
-              FungusPromptConn:Disconnect()
-              FungusPromptConn = nil
-          end
-      end
-
-      local function getNextFungusName()
-          local total = #State.FungusAutoOrder
-          for _ = 1, total do
-              local name = State.FungusAutoOrder[State.FungusAutoIndex]
-              State.FungusAutoIndex += 1
-              if State.FungusAutoIndex > total then
-                  State.FungusAutoIndex = 1
-              end
-              if FungusItemEnabled[name] and (not FungusSkipMaxed or not FungusMaxed[name]) then
-                  return name
-              end
-          end
-          return nil
-      end
-
-      local FungusBox = createSubSectionBox(MushroomAutomationSection, "Auto Buy Fungus Shop")
-      local FungusControls = {}
-      local function addFungusControl(ctrl)
-          FungusControls[#FungusControls + 1] = ctrl
-          return ctrl
-      end
-
-      createToggle(FungusBox, "On/Off", nil, false, function(v)
-          FungusAutoEnabled = v
-          setControlsEnabled(FungusControls, FungusAutoEnabled)
-          if FungusAutoEnabled then
-              if FungusAutoConn then
-                  FungusAutoConn:Disconnect()
-              end
-              FungusAutoAccum = 0
-              State.FungusAutoIndex = 1
-              FungusMaxed = {}
-              attachFungusPromptListener()
-              FungusAutoConn = RunService.Heartbeat:Connect(function(dt)
-                  FungusAutoAccum += dt
-                  if FungusAutoAccum >= FungusAutoInterval then
-                      FungusAutoAccum = 0
-                      local remote = getMainRemote and getMainRemote() or nil
-                      if not remote then return end
-                      local now = os.clock()
-                      if now - FungusLastClick < getGlobalClickCooldown("FungusShop") then
-                          return
-                      end
-                      local action = FungusUseUpgradeAll and "UpgradeAll" or "Upgrade"
-                      local name = getNextFungusName()
-                      if name then
-                          pcall(function()
-                              remote:FireServer(action, "Fungus", name)
-                          end)
-                      else
-                          return
-                      end
-                      FungusLastClick = now
-                  end
-              end)
-              trackConnection(FungusAutoConn)
-          else
-              if FungusAutoConn then
-                  FungusAutoConn:Disconnect()
-                  FungusAutoConn = nil
-              end
-              detachFungusPromptListener()
-          end
-      end)
-
-      addFungusControl(createToggle(FungusBox, "Mode: Upgrade All", nil, true, function(v)
-          FungusUseUpgradeAll = v
-      end))
-
-      addFungusControl(createSlider(FungusBox, "Click Speed (sec)", nil, 0.1, 5, FungusDefaultClickCooldown, function(v)
-          setGlobalClickCooldown("FungusShop", v)
-      end, 1))
-
-      addFungusControl(createToggle(FungusBox, "Skip Maxed Items", nil, true, function(v)
-          FungusSkipMaxed = v
-      end))
-
-      local FungusListContainer
-      addFungusControl(createListDropdownRow(FungusBox, "Item List", function(open)
-          if FungusListContainer then
-              FungusListContainer.Visible = open
-          end
-      end))
-
-      local FungusListContent = createSubSectionBox(FungusBox, "Item List")
-      FungusListContainer = FungusListContent.Parent
-      FungusListContainer.Visible = false
-
-      for _, name in ipairs(State.FungusAutoOrder) do
-          addFungusControl(createToggle(FungusListContent, name, nil, true, function(v)
-              FungusItemEnabled[name] = v
-          end))
-      end
-
-      setControlsEnabled(FungusControls, false)
-
-      local SporesAutoEnabled = false
-      local SporesAutoConn = nil
-      local SporesAutoAccum = 0
-      local SporesAutoInterval = 0.25
-      local SporesDefaultClickCooldown = 0.6
-      local SporesLastClick = 0
-      local SporesUseUpgradeAll = true
-      local SporesMaxed = {}
-      local SporesPromptConn = nil
-      local SporesSkipMaxed = true
-      local SporesItemEnabled = {}
-      State.SporesAutoIndex = 1
-      State.SporesAutoOrder = {
-          "Spores Multiplier",
-          "Fungus Multiplier",
-          "Score Multiplier",
-          "Mushrooms Multiplier",
-          "Mushroom Inventory",
-          "Plant Max Size Cap",
-          "Glowy Crystal Multiplier",
-          "Magic Energy Multiplier",
-          "Extra Spores Multiplier"
-      }
-
-      setGlobalClickCooldown("SporesShop", SporesDefaultClickCooldown)
-      for _, name in ipairs(State.SporesAutoOrder) do
-          SporesItemEnabled[name] = true
-      end
-
-      local function attachSporesPromptListener()
-          if SporesPromptConn then
-              return
-          end
-          local ok, remote = pcall(function()
-              return game:GetService("ReplicatedStorage").Packages.Knit.Services.RemotesService.RE.PromptNotification
-          end)
-          if not ok or not remote or not remote:IsA("RemoteEvent") then
-              return
-          end
-          SporesPromptConn = remote.OnClientEvent:Connect(function(_, msg)
-              if not SporesAutoEnabled then
-                  return
-              end
-              if type(msg) ~= "string" then
-                  return
-              end
-              local lower = string.lower(msg)
-              if not string.find(lower, "already reached max upgrade", 1, true) then
-                  return
-              end
-              for _, name in ipairs(State.SporesAutoOrder) do
-                  if string.find(lower, string.lower(name), 1, true) then
-                      SporesMaxed[name] = true
-                  end
-              end
-          end)
-          trackConnection(SporesPromptConn)
-      end
-
-      local function detachSporesPromptListener()
-          if SporesPromptConn then
-              SporesPromptConn:Disconnect()
-              SporesPromptConn = nil
-          end
-      end
-
-      local function getNextSporesName()
-          local total = #State.SporesAutoOrder
-          for _ = 1, total do
-              local name = State.SporesAutoOrder[State.SporesAutoIndex]
-              State.SporesAutoIndex += 1
-              if State.SporesAutoIndex > total then
-                  State.SporesAutoIndex = 1
-              end
-              if SporesItemEnabled[name] and (not SporesSkipMaxed or not SporesMaxed[name]) then
-                  return name
-              end
-          end
-          return nil
-      end
-
-      local SporesBox = createSubSectionBox(MushroomAutomationSection, "Auto Buy Spores Shop")
-      local SporesControls = {}
-      local function addSporesControl(ctrl)
-          SporesControls[#SporesControls + 1] = ctrl
-          return ctrl
-      end
-
-      createToggle(SporesBox, "On/Off", nil, false, function(v)
-          SporesAutoEnabled = v
-          setControlsEnabled(SporesControls, SporesAutoEnabled)
-          if SporesAutoEnabled then
-              if SporesAutoConn then
-                  SporesAutoConn:Disconnect()
-              end
-              SporesAutoAccum = 0
-              State.SporesAutoIndex = 1
-              SporesMaxed = {}
-              attachSporesPromptListener()
-              SporesAutoConn = RunService.Heartbeat:Connect(function(dt)
-                  SporesAutoAccum += dt
-                  if SporesAutoAccum >= SporesAutoInterval then
-                      SporesAutoAccum = 0
-                      local remote = getMainRemote and getMainRemote() or nil
-                      if not remote then return end
-                      local now = os.clock()
-                      if now - SporesLastClick < getGlobalClickCooldown("SporesShop") then
-                          return
-                      end
-                      local action = SporesUseUpgradeAll and "UpgradeAll" or "Upgrade"
-                      local name = getNextSporesName()
-                      if name then
-                          pcall(function()
-                              remote:FireServer(action, "Spores", name)
-                          end)
-                      else
-                          return
-                      end
-                      SporesLastClick = now
-                  end
-              end)
-              trackConnection(SporesAutoConn)
-          else
-              if SporesAutoConn then
-                  SporesAutoConn:Disconnect()
-                  SporesAutoConn = nil
-              end
-              detachSporesPromptListener()
-          end
-      end)
-
-      addSporesControl(createToggle(SporesBox, "Mode: Upgrade All", nil, true, function(v)
-          SporesUseUpgradeAll = v
-      end))
-
-      addSporesControl(createSlider(SporesBox, "Click Speed (sec)", nil, 0.1, 5, SporesDefaultClickCooldown, function(v)
-          setGlobalClickCooldown("SporesShop", v)
-      end, 1))
-
-      addSporesControl(createToggle(SporesBox, "Skip Maxed Items", nil, true, function(v)
-          SporesSkipMaxed = v
-      end))
-
-      local SporesListContainer
-      addSporesControl(createListDropdownRow(SporesBox, "Item List", function(open)
-          if SporesListContainer then
-              SporesListContainer.Visible = open
-          end
-      end))
-
-      local SporesListContent = createSubSectionBox(SporesBox, "Item List")
-      SporesListContainer = SporesListContent.Parent
-      SporesListContainer.Visible = false
-
-      for _, name in ipairs(State.SporesAutoOrder) do
-          addSporesControl(createToggle(SporesListContent, name, nil, true, function(v)
-              SporesItemEnabled[name] = v
-          end))
-      end
-
-      setControlsEnabled(SporesControls, false)
+      })
   end
 
   -- [SECTION] Farming Teleports
@@ -5725,6 +7887,18 @@ createGrid(RunesSection, RuneList, function(item)
     setFarmingAutoShop(nil)
 end)
 
+    local function addEmptyAutomation(tab)
+        local section = createSectionBox(tab:GetPage(), "Automation")
+        return section
+    end
+
+    addEmptyAutomation(State.Tabs.Forest)
+    addEmptyAutomation(State.Tabs.Winter)
+    addEmptyAutomation(State.Tabs.Desert)
+    addEmptyAutomation(State.Tabs.Mines)
+    addEmptyAutomation(State.Tabs.Cyber)
+    addEmptyAutomation(State.Tabs.Ocean)
+
 end
 
 initWorldTeleports()
@@ -5813,53 +7987,49 @@ State.InitValentine = function()
     end)
 
     local ValentineAutomationSection = createSectionBox(tab:GetPage(), "Automation")
-
-    setupAutoShop(ValentineAutomationSection, {
-        ToggleName = "Auto Buy Hearts Shop",
-        DisplayName = "Auto Buy Hearts Shop",
+    setupAutoBuyGroup(ValentineAutomationSection, {
+        GroupKey = "Valentine Event",
+        DisplayName = "Auto Buy Shop",
         ModeToggleName = "Mode: Upgrade All",
         SpeedLabel = "Click Speed (sec)",
-        ShopName = "Hearts",
-        Items = {
-            "Infinite Hearts",
-            "Hearts II",
-            "Hearts III",
-            "Love",
-            "Valentine Bulk",
-            "Valentine Shards Chance",
-            "Valentine Luck",
-            "Connor Balanced it Returns!",
-            "Infinite Love"
-        },
-        CooldownKey = "ValentineHearts",
+        CooldownKey = "ValentineAutoBuy",
         DefaultCooldown = 0.6,
-        StateIndexKey = "ValentineHeartsAutoIndex",
-        StateOrderKey = "ValentineHeartsAutoOrder"
-    })
-
-    setupAutoShop(ValentineAutomationSection, {
-        ToggleName = "Auto Buy Love Shop",
-        DisplayName = "Auto Buy Love Shop",
-        ModeToggleName = "Mode: Upgrade All",
-        SpeedLabel = "Click Speed (sec)",
-        ShopName = "Love",
-        Items = {
-            "Hearts",
-            "Love",
-            "Clicks",
-            "Clicker Tokens",
-            "Fish Multiplier",
-            "Light Points",
-            "Madness",
-            "Sins",
-            "Sunite",
-            "Rune Bulk",
-            "Rune Luck"
-        },
-        CooldownKey = "ValentineLove",
-        DefaultCooldown = 0.6,
-        StateIndexKey = "ValentineLoveAutoIndex",
-        StateOrderKey = "ValentineLoveAutoOrder"
+        Shops = {
+            {
+                Key = "Hearts",
+                DisplayName = "Hearts Shop",
+                ShopName = "Hearts",
+                Items = {
+                    "Infinite Hearts",
+                    "Hearts II",
+                    "Hearts III",
+                    "Love",
+                    "Valentine Bulk",
+                    "Valentine Shards Chance",
+                    "Valentine Luck",
+                    "Connor Balanced it Returns!",
+                    "Infinite Love"
+                }
+            },
+            {
+                Key = "Love",
+                DisplayName = "Love Shop",
+                ShopName = "Love",
+                Items = {
+                    "Hearts",
+                    "Love",
+                    "Clicks",
+                    "Clicker Tokens",
+                    "Fish Multiplier",
+                    "Light Points",
+                    "Madness",
+                    "Sins",
+                    "Sunite",
+                    "Rune Bulk",
+                    "Rune Luck"
+                }
+            }
+        }
     })
 end
 
@@ -6102,61 +8272,51 @@ State.InitHell = function()
     local tab = State.Tabs.Hell
     local HellAutomationSection = createSectionBox(tab:GetPage(), "Automation")
 
-    setupAutoShop(HellAutomationSection, {
-        ToggleName = "Auto Buy Madness Shop",
-        DisplayName = "Auto Buy Madness Shop",
+    setupAutoBuyGroup(HellAutomationSection, {
+        GroupKey = "Hell World",
+        DisplayName = "Auto Buy Shop",
         ModeToggleName = "Mode: Upgrade All",
         SpeedLabel = "Click Speed (sec)",
-        ShopName = "Madness",
-        Items = {
-            "Madness Multiplier",
-            "Madness Multiplier II",
-            "Ember Multiplier",
-            "Hell XP Multiplier",
-            "Sins Multiplier",
-            "Madness Press Speed",
-            "Connor Madnessly Balanced It"
-        },
-        CooldownKey = "HellMadness",
+        CooldownKey = "HellAutoBuy",
         DefaultCooldown = 0.6,
-        StateIndexKey = "HellMadnessAutoIndex",
-        StateOrderKey = "HellMadnessAutoOrder"
-    })
-
-    setupAutoShop(HellAutomationSection, {
-        ToggleName = "Auto Buy Hell XP Shop",
-        DisplayName = "Auto Buy Hell XP Shop",
-        ModeToggleName = "Mode: Upgrade All",
-        SpeedLabel = "Click Speed (sec)",
-        ShopName = "Hell XP",
-        Items = {
-            "Hell XP Multiplier",
-            "Madness Multiplier",
-            "Ember Multiplier",
-            "Sins Multiplier"
-        },
-        CooldownKey = "HellXP",
-        DefaultCooldown = 0.6,
-        StateIndexKey = "HellXPAutoIndex",
-        StateOrderKey = "HellXPAutoOrder"
-    })
-
-    setupAutoShop(HellAutomationSection, {
-        ToggleName = "Auto Buy Sins Shop",
-        DisplayName = "Auto Buy Sins Shop",
-        ModeToggleName = "Mode: Upgrade All",
-        SpeedLabel = "Click Speed (sec)",
-        ShopName = "Sins",
-        Items = {
-            "Madness Multiplier",
-            "Ember Multiplier",
-            "Sins Multiplier",
-            "Hell XP Multiplier"
-        },
-        CooldownKey = "Sins",
-        DefaultCooldown = 0.6,
-        StateIndexKey = "SinsAutoIndex",
-        StateOrderKey = "SinsAutoOrder"
+        Shops = {
+            {
+                Key = "Madness",
+                DisplayName = "Madness Shop",
+                ShopName = "Madness",
+                Items = {
+                    "Madness Multiplier",
+                    "Madness Multiplier II",
+                    "Ember Multiplier",
+                    "Hell XP Multiplier",
+                    "Sins Multiplier",
+                    "Madness Press Speed",
+                    "Connor Madnessly Balanced It"
+                }
+            },
+            {
+                Key = "Hell XP",
+                DisplayName = "Hell XP Shop",
+                ShopName = "Hell XP",
+                Items = {
+                    "Hell XP Multiplier",
+                    "Madness Multiplier",
+                    "Ember Multiplier",
+                    "Sins Multiplier"
+                }
+            },
+            {
+                Key = "Sins",
+                DisplayName = "Sins Shop",
+                ShopName = "Sins",
+                Items = {
+                    "Madness Multiplier",
+                    "Ember Multiplier",
+                    "Sins Multiplier",
+                    "Hell XP Multiplier"
+                }
+            }
+        }
     })
 
     local FullAutomationSection = createSectionBox(tab:GetPage(), "Full Automation")
@@ -6365,7 +8525,8 @@ State.InitHell = function()
     local lastClick = 0
     local accum = 0
     local interval = 0.25
-    local teleportToken = 0
+    State.HellStarterTeleportToken = State.HellStarterTeleportToken or 0
+    State.HellStarterTeleportRunning = State.HellStarterTeleportRunning or false
 
     State.HellStarterShopIndex = 1
     State.HellStarterItemIndex = State.HellStarterItemIndex or {}
@@ -6492,31 +8653,66 @@ State.InitHell = function()
         detachPromptListener()
     end
 
+    local function canTeleport()
+        return Config.HellStarterEnabled == true and Config.HellStarterTeleportEnabled == true
+    end
+
+    local function isTeleportActive()
+        return State.HellStarterTeleportRunning == true and canTeleport()
+    end
+
+    local function setTeleportLabel(text)
+        local value = text or "Hold: idle"
+        State.HellStarterTeleportLabelText = value
+        if State.HellStarterTeleportLabel and State.HellStarterTeleportLabel.Set then
+            State.HellStarterTeleportLabel:Set(value)
+        end
+    end
+
     local function stopTeleportLoop()
-        teleportToken += 1
+        State.HellStarterTeleportRunning = false
+        State.HellStarterTeleportToken = (State.HellStarterTeleportToken or 0) + 1
+        State.HellStarterTeleportHoldStart = nil
+        State.HellStarterTeleportHoldSeconds = nil
+        setTeleportLabel("Hold: idle")
     end
 
     local function startTeleportLoop()
-        stopTeleportLoop()
-        teleportToken += 1
-        local token = teleportToken
+        State.HellStarterTeleportToken = (State.HellStarterTeleportToken or 0) + 1
+        local token = State.HellStarterTeleportToken
+        State.HellStarterTeleportRunning = true
+        local holdSeconds = math.clamp(tonumber(Config.HellStarterTeleportHold) or 15, 15, 900)
+        State.HellStarterTeleportHoldSeconds = holdSeconds
+        State.HellStarterTeleportHoldStart = os.clock()
+        setTeleportLabel(string.format("Hold: %.1fs", holdSeconds))
         task.spawn(function()
-            while token == teleportToken and starterEnabled and teleportEnabled do
+            while token == State.HellStarterTeleportToken do
+                if not isTeleportActive() then
+                    break
+                end
                 local madnessData = State.HellTeleports and State.HellTeleports.Madness or nil
                 if madnessData then
                     teleportWithData(madnessData)
                 end
-                local holdSeconds = math.clamp(tonumber(Config.HellStarterTeleportHold) or 15, 15, 900)
+                holdSeconds = math.clamp(tonumber(Config.HellStarterTeleportHold) or 15, 15, 900)
                 local startHold = os.clock()
-                while token == teleportToken and starterEnabled and teleportEnabled and (os.clock() - startHold) < holdSeconds do
+                State.HellStarterTeleportHoldSeconds = holdSeconds
+                State.HellStarterTeleportHoldStart = startHold
+                while token == State.HellStarterTeleportToken and (os.clock() - startHold) < holdSeconds do
+                    if not isTeleportActive() then
+                        break
+                    end
+                    local remaining = math.max(0, holdSeconds - (os.clock() - startHold))
+                    setTeleportLabel(string.format("Hold: %.1fs", remaining))
                     task.wait(0.1)
                 end
-                if token ~= teleportToken or not starterEnabled or not teleportEnabled then
+                setTeleportLabel("Hold: selesai")
+                if token ~= State.HellStarterTeleportToken or not isTeleportActive() then
                     break
                 end
                 local stepSeconds = math.clamp(tonumber(Config.HellStarterTeleportStep) or 3, 1, 10)
                 for _, name in ipairs(DropperOrder) do
-                    if token ~= teleportToken or not starterEnabled or not teleportEnabled then
+                    if token ~= State.HellStarterTeleportToken or not isTeleportActive() then
                         break
                     end
                     if dropperEnabled[name] then
@@ -6525,7 +8721,10 @@ State.InitHell = function()
                             teleportWithData(data)
                         end
                         local startStep = os.clock()
-                        while token == teleportToken and starterEnabled and teleportEnabled and (os.clock() - startStep) < stepSeconds do
+                        while token == State.HellStarterTeleportToken and (os.clock() - startStep) < stepSeconds do
+                            if not isTeleportActive() then
+                                break
+                            end
                             task.wait(0.1)
                         end
                     end
@@ -6544,10 +8743,15 @@ State.InitHell = function()
         else
             stopAutoBuy()
         end
-        if starterEnabled and teleportEnabled then
+        if canTeleport() then
             startTeleportLoop()
+            local holdSeconds = math.clamp(tonumber(Config.HellStarterTeleportHold) or 15, 15, 900)
+            setTeleportLabel(string.format("Hold: %.1fs", holdSeconds))
         else
             stopTeleportLoop()
+        end
+        if State.FullAutomationLog and State.FullAutomationLog.SetActive then
+            State.FullAutomationLog.SetActive("HellStarterAutomation", "Starter Automation (Hell World)", starterEnabled)
         end
     end
 
@@ -6606,14 +8810,61 @@ State.InitHell = function()
     local TeleportBox = createSubSectionBox(StarterAutomationSection, "Auto Teleport")
     local StarterTeleportToggle = addStarterControl(createToggle(TeleportBox, "Enable Auto Teleport", "HellStarterTeleportEnabled", Config.HellStarterTeleportEnabled, function(v)
         teleportEnabled = v
-        if starterEnabled and teleportEnabled then
+        if canTeleport() then
             startTeleportLoop()
+            local holdSeconds = math.clamp(tonumber(Config.HellStarterTeleportHold) or 15, 15, 900)
+            setTeleportLabel(string.format("Hold: %.1fs", holdSeconds))
         else
             stopTeleportLoop()
         end
     end))
 
     local StarterHoldSlider = addStarterControl(createSlider(TeleportBox, "Madness Hold (sec)", "HellStarterTeleportHold", 15, 900, Config.HellStarterTeleportHold, nil, 0))
+    local TeleportCountdownLabel = (function()
+        local frame = Instance.new("Frame")
+        frame.Size = UDim2.new(1, 0, 0, 24)
+        frame.BorderSizePixel = 0
+        frame.Parent = TeleportBox
+        registerTheme(frame, "BackgroundColor3", "Main")
+        addCorner(frame, 6)
+        addStroke(frame, "Muted", 1, 0.8)
+
+        local pad = Instance.new("UIPadding")
+        pad.PaddingLeft = UDim.new(0, 8)
+        pad.PaddingRight = UDim.new(0, 8)
+        pad.Parent = frame
+
+        local label = Instance.new("TextLabel")
+        label.Size = UDim2.new(1, 0, 1, 0)
+        label.BackgroundTransparency = 1
+        label.Font = Enum.Font.Gotham
+        label.TextSize = 12
+        label.TextXAlignment = Enum.TextXAlignment.Left
+        label.Text = "Hold: idle"
+        label.Parent = frame
+        registerTheme(label, "TextColor3", "Muted")
+
+        return {
+            Set = function(_, text)
+                label.Text = text or "Hold: idle"
+            end
+        }
+    end)()
+    State.HellStarterTeleportLabel = TeleportCountdownLabel
+
+    if State.HellStarterTeleportLabelText then
+        setTeleportLabel(State.HellStarterTeleportLabelText)
+    elseif canTeleport() then
+        local holdSeconds = math.clamp(tonumber(Config.HellStarterTeleportHold) or 15, 15, 900)
+        if State.HellStarterTeleportRunning and State.HellStarterTeleportHoldStart and State.HellStarterTeleportHoldSeconds then
+            local remaining = math.max(0, State.HellStarterTeleportHoldSeconds - (os.clock() - State.HellStarterTeleportHoldStart))
+            setTeleportLabel(string.format("Hold: %.1fs", remaining))
+        else
+            setTeleportLabel(string.format("Hold: %.1fs", holdSeconds))
+        end
+    else
+        setTeleportLabel("Hold: idle")
+    end
 
     local StarterStepSlider = addStarterControl(createSlider(TeleportBox, "Dropper Step (sec)", "HellStarterTeleportStep", 1, 10, Config.HellStarterTeleportStep, nil, 1))
 
@@ -6780,6 +9031,8 @@ do
     createGrid(Event500KTeleportSection, Event500KList, function(item)
         teleportWithData(item.Data)
     end)
+
+    local Event500KAutomationSection = createSectionBox(State.Tabs.Event500K:GetPage(), "Automation")
 end
 
 do
@@ -7066,29 +9319,33 @@ do
 
     State.InitHalloween = function()
         local HalloweenAutomationSection = createSectionBox(State.Tabs.Halloween:GetPage(), "Automation")
-        setupAutoShop(HalloweenAutomationSection, {
-            ToggleName = "Auto Buy Flesh Shop",
-            DisplayName = "Auto Buy Flesh Shop",
+        setupAutoBuyGroup(HalloweenAutomationSection, {
+            GroupKey = "Halloween",
+            DisplayName = "Auto Buy Shop",
             ModeToggleName = "Mode: Upgrade All",
             SpeedLabel = "Click Speed (sec)",
-            ShopName = "Flesh",
-            Items = {
-                "Flesh Multiplier",
-                "Flesh Multiplier II",
-                "Mob Damage Multiplier",
-                "Attack Speed",
-                "Halloween Bulk",
-                "Halloween Luck",
-                "Sword Enchants Gems Chance",
-                "Unlock Candy Corn",
-                "Candy Corn Multiplier III",
-                "Refined Candy Multiplier III",
-                "Factorized Candy Multiplier V"
-            },
-            CooldownKey = "HalloweenFlesh",
+            CooldownKey = "HalloweenAutoBuy",
             DefaultCooldown = 0.6,
-            StateIndexKey = "HalloweenFleshAutoIndex",
-            StateOrderKey = "HalloweenFleshAutoOrder"
+            Shops = {
+                {
+                    Key = "Flesh",
+                    DisplayName = "Flesh Shop",
+                    ShopName = "Flesh",
+                    Items = {
+                        "Flesh Multiplier",
+                        "Flesh Multiplier II",
+                        "Mob Damage Multiplier",
+                        "Attack Speed",
+                        "Halloween Bulk",
+                        "Halloween Luck",
+                        "Sword Enchants Gems Chance",
+                        "Unlock Candy Corn",
+                        "Candy Corn Multiplier III",
+                        "Refined Candy Multiplier III",
+                        "Factorized Candy Multiplier V"
+                    }
+                }
+            }
         })
     end
 end
@@ -7164,6 +9421,8 @@ do
     createGrid(ThanksgivingTeleportSection, ThanksgivingList, function(item)
         teleportWithData(item.Data)
     end)
+
+    local ThanksgivingAutomationSection = createSectionBox(State.Tabs.Thanksgiving:GetPage(), "Automation")
 end
 
 do
@@ -7267,6 +9526,8 @@ do
     createGrid(Event3MTeleportSection, Event3MList, function(item)
         teleportWithData(item.Data)
     end)
+
+    local Event3MAutomationSection = createSectionBox(State.Tabs.Event3M:GetPage(), "Automation")
 end
 
 do
@@ -7394,77 +9655,67 @@ do
     State.InitChristmas = function()
         local ChristmasAutomationSection = createSectionBox(State.Tabs.Christmas:GetPage(), "Automation")
 
-        setupAutoShop(ChristmasAutomationSection, {
-            ToggleName = "Auto Buy Candy Cane Shop",
-            DisplayName = "Auto Buy Candy Cane Shop",
+        setupAutoBuyGroup(ChristmasAutomationSection, {
+            GroupKey = "Christmas Event",
+            DisplayName = "Auto Buy Shop",
             ModeToggleName = "Mode: Upgrade All",
             SpeedLabel = "Click Speed (sec)",
-            ShopName = "Candy Cane",
-            Items = {
-                "Candy Cane Multiplier",
-                "Mini Candy Cane Multipier",
-                "Infinite Candy Cane",
-                "Free Christmas Bulk",
-                "Christmas Luck",
-                "Christmas Bulk",
-                "Gingerbread Multi",
-                "Christmas Spirit"
-            },
-            CooldownKey = "ChristmasCandyCane",
+            CooldownKey = "ChristmasAutoBuy",
             DefaultCooldown = 0.6,
-            StateIndexKey = "ChristmasCandyCaneAutoIndex",
-            StateOrderKey = "ChristmasCandyCaneAutoOrder"
-        })
-
-        setupAutoShop(ChristmasAutomationSection, {
-            ToggleName = "Auto Buy Milk Shop",
-            DisplayName = "Auto Buy Milk Shop",
-            ModeToggleName = "Mode: Upgrade All",
-            SpeedLabel = "Click Speed (sec)",
-            ShopName = "Milk",
-            Items = {
-                "Milk Multiplier",
-                "Cookies Multiplier",
-                "Christmas Bulk",
-                "Christmas Luck",
-                "Candy Cane Multiplier",
-                "Gingerbread Multiplier",
-                "Christmas Spirit Multiplier",
-                "Milk Multiplier II",
-                "Christmas Bulk Multiplier",
-                "Christmas Luck Multiplier"
-            },
-            CooldownKey = "ChristmasMilk",
-            DefaultCooldown = 0.6,
-            StateIndexKey = "ChristmasMilkAutoIndex",
-            StateOrderKey = "ChristmasMilkAutoOrder"
-        })
-
-        setupAutoShop(ChristmasAutomationSection, {
-            ToggleName = "Auto Buy Cookies Shop",
-            DisplayName = "Auto Buy Cookies Shop",
-            ModeToggleName = "Mode: Upgrade All",
-            SpeedLabel = "Click Speed (sec)",
-            ShopName = "Cookies",
-            Items = {
-                "Cookies Multiplier",
-                "Mini Cookies Multiplier",
-                "Santa Damage",
-                "Santa Respawn Speed",
-                "Santa Attack Speed",
-                "Milk Multiplier",
-                "Connor Balanced it",
-                "Candy Cane",
-                "Gingerbread",
-                "Connor Balanced It Final Part",
-                "Christmas Spirit multi",
-                "Blizz Said Rank6 was hard",
-                "Ultra Santa Damage"
-            },
-            CooldownKey = "ChristmasCookies",
-            DefaultCooldown = 0.6,
-            StateIndexKey = "ChristmasCookiesAutoIndex",
-            StateOrderKey = "ChristmasCookiesAutoOrder"
+            Shops = {
+                {
+                    Key = "Candy Cane",
+                    DisplayName = "Candy Cane Shop",
+                    ShopName = "Candy Cane",
+                    Items = {
+                        "Candy Cane Multiplier",
+                        "Mini Candy Cane Multipier",
+                        "Infinite Candy Cane",
+                        "Free Christmas Bulk",
+                        "Christmas Luck",
+                        "Christmas Bulk",
+                        "Gingerbread Multi",
+                        "Christmas Spirit"
+                    }
+                },
+                {
+                    Key = "Milk",
+                    DisplayName = "Milk Shop",
+                    ShopName = "Milk",
+                    Items = {
+                        "Milk Multiplier",
+                        "Cookies Multiplier",
+                        "Christmas Bulk",
+                        "Christmas Luck",
+                        "Candy Cane Multiplier",
+                        "Gingerbread Multiplier",
+                        "Christmas Spirit Multiplier",
+                        "Milk Multiplier II",
+                        "Christmas Bulk Multiplier",
+                        "Christmas Luck Multiplier"
+                    }
+                },
+                {
+                    Key = "Cookies",
+                    DisplayName = "Cookies Shop",
+                    ShopName = "Cookies",
+                    Items = {
+                        "Cookies Multiplier",
+                        "Mini Cookies Multiplier",
+                        "Santa Damage",
+                        "Santa Respawn Speed",
+                        "Santa Attack Speed",
+                        "Milk Multiplier",
+                        "Connor Balanced it",
+                        "Candy Cane",
+                        "Gingerbread",
+                        "Connor Balanced It Final Part",
+                        "Christmas Spirit multi",
+                        "Blizz Said Rank6 was hard",
+                        "Ultra Santa Damage"
+                    }
+                }
+            }
         })
     end
 end
@@ -8206,245 +10457,38 @@ State.InitFiveM = function()
     end)
 
     local FiveMAutomationSection = createSectionBox(State.Tabs.FiveM:GetPage(), "Automation")
-    local function setControlsEnabled(controls, enabled)
-        for _, ctrl in ipairs(controls) do
-            if ctrl and ctrl.SetEnabled then
-                ctrl:SetEnabled(enabled)
-            end
-        end
-    end
-
-    local function createListDropdownRow(parent, labelText, onToggle)
-        local frame = Instance.new("Frame")
-        frame.Size = UDim2.new(1, 0, 0, 30)
-        frame.BorderSizePixel = 0
-        frame.Parent = parent
-        registerTheme(frame, "BackgroundColor3", "Main")
-        addCorner(frame, 6)
-        addStroke(frame, "Muted", 1, 0.8)
-
-        local label = Instance.new("TextLabel")
-        label.Size = UDim2.new(1, -50, 1, 0)
-        label.BackgroundTransparency = 1
-        label.Font = Enum.Font.Gotham
-        label.TextSize = 13
-        label.TextXAlignment = Enum.TextXAlignment.Left
-        label.Text = labelText
-        label.Parent = frame
-        registerTheme(label, "TextColor3", "Text")
-
-        local btn = Instance.new("TextButton")
-        btn.Size = UDim2.new(0, 30, 0, 20)
-        btn.Position = UDim2.new(1, -35, 0.5, -10)
-        btn.BorderSizePixel = 0
-        btn.Font = Enum.Font.GothamSemibold
-        btn.TextSize = 12
-        btn.AutoButtonColor = false
-        btn.Parent = frame
-        registerTheme(btn, "BackgroundColor3", "Panel")
-        registerTheme(btn, "TextColor3", "Text")
-        addCorner(btn, 6)
-
-        local enabled = true
-        local expanded = false
-
-        local function setExpanded(state)
-            expanded = state and true or false
-            btn.Text = expanded and "v" or ">"
-        end
-
-        btn.MouseButton1Click:Connect(function()
-            if not enabled then
-                return
-            end
-            setExpanded(not expanded)
-            if onToggle then
-                onToggle(expanded)
-            end
-        end)
-
-        setExpanded(false)
-
-        return {
-            SetEnabled = function(_, value)
-                enabled = value and true or false
-                label.TextTransparency = enabled and 0 or 0.4
-                btn.TextTransparency = enabled and 0 or 0.4
-            end,
-            SetExpanded = function(_, value)
-                setExpanded(value)
-            end,
-            Frame = frame
+    setupAutoBuyGroup(FiveMAutomationSection, {
+        GroupKey = "5M Event",
+        DisplayName = "Auto Buy Shop",
+        ModeToggleName = "Mode: Upgrade All",
+        SpeedLabel = "Click Speed (sec)",
+        CooldownKey = "FiveMAutoBuy",
+        DefaultCooldown = 0.6,
+        Shops = {
+            {
+                Key = "Clicks",
+                DisplayName = "Clicks Shop",
+                ShopName = "Clicks",
+                Items = {
+                    "Free 5M Bulk",
+                    "Click Multiplier",
+                    "Click Multiplier II",
+                    "Click Multiplier III",
+                    "Click Multiplier IV",
+                    "5M Bulk",
+                    "5M Luck",
+                    "Bytes",
+                    "Clicker Tokens",
+                    "Bytes II",
+                    "Infinite Clicks",
+                    "Event Tier Timer",
+                    "Event Tier Luck",
+                    "Event Tier Bulk",
+                    "Event Tier Luck II"
+                }
+            }
         }
-    end
-
-    local FiveMClicksAutoEnabled = false
-    local FiveMClicksAutoConn = nil
-    local FiveMClicksAutoAccum = 0
-    local FiveMClicksAutoInterval = 0.25
-    local FiveMClicksDefaultClickCooldown = 0.6
-    local FiveMClicksLastClick = 0
-    local FiveMClicksUseUpgradeAll = true
-    local FiveMClicksMaxed = {}
-    local FiveMClicksPromptConn = nil
-    local FiveMClicksSkipMaxed = true
-    local FiveMClicksItemEnabled = {}
-    State.FiveMClicksAutoIndex = 1
-    State.FiveMClicksAutoOrder = {
-        "Free 5M Bulk",
-        "Click Multiplier",
-        "Click Multiplier II",
-        "Click Multiplier III",
-        "Click Multiplier IV",
-        "5M Bulk",
-        "5M Luck",
-        "Bytes",
-        "Clicker Tokens",
-        "Bytes II",
-        "Infinite Clicks",
-        "Event Tier Timer",
-        "Event Tier Luck",
-        "Event Tier Bulk",
-        "Event Tier Luck II"
-    }
-
-    setGlobalClickCooldown("FiveMClicks", FiveMClicksDefaultClickCooldown)
-    for _, name in ipairs(State.FiveMClicksAutoOrder) do
-        FiveMClicksItemEnabled[name] = true
-    end
-
-    local function attachFiveMClicksPromptListener()
-        if FiveMClicksPromptConn then
-            return
-        end
-        local ok, remote = pcall(function()
-            return game:GetService("ReplicatedStorage").Packages.Knit.Services.RemotesService.RE.PromptNotification
-        end)
-        if not ok or not remote or not remote:IsA("RemoteEvent") then
-            return
-        end
-        FiveMClicksPromptConn = remote.OnClientEvent:Connect(function(_, msg)
-            if not FiveMClicksAutoEnabled then
-                return
-            end
-            if type(msg) ~= "string" then
-                return
-            end
-            local lower = string.lower(msg)
-            if not string.find(lower, "already reached max upgrade", 1, true) then
-                return
-            end
-            for _, name in ipairs(State.FiveMClicksAutoOrder) do
-                if string.find(lower, string.lower(name), 1, true) then
-                    FiveMClicksMaxed[name] = true
-                end
-            end
-        end)
-        trackConnection(FiveMClicksPromptConn)
-    end
-
-    local function detachFiveMClicksPromptListener()
-        if FiveMClicksPromptConn then
-            FiveMClicksPromptConn:Disconnect()
-            FiveMClicksPromptConn = nil
-        end
-    end
-
-    local function getNextFiveMClicksName()
-        local total = #State.FiveMClicksAutoOrder
-        for _ = 1, total do
-            local name = State.FiveMClicksAutoOrder[State.FiveMClicksAutoIndex]
-            State.FiveMClicksAutoIndex += 1
-            if State.FiveMClicksAutoIndex > total then
-                State.FiveMClicksAutoIndex = 1
-            end
-            if FiveMClicksItemEnabled[name] and (not FiveMClicksSkipMaxed or not FiveMClicksMaxed[name]) then
-                return name
-            end
-        end
-        return nil
-    end
-
-    local FiveMClicksBox = createSubSectionBox(FiveMAutomationSection, "Auto Buy Clicks Shop")
-    local FiveMClicksControls = {}
-    local function addFiveMClicksControl(ctrl)
-        FiveMClicksControls[#FiveMClicksControls + 1] = ctrl
-        return ctrl
-    end
-
-    createToggle(FiveMClicksBox, "On/Off", nil, false, function(v)
-        FiveMClicksAutoEnabled = v
-        setControlsEnabled(FiveMClicksControls, FiveMClicksAutoEnabled)
-        if FiveMClicksAutoEnabled then
-            if FiveMClicksAutoConn then
-                FiveMClicksAutoConn:Disconnect()
-            end
-            FiveMClicksAutoAccum = 0
-            State.FiveMClicksAutoIndex = 1
-            FiveMClicksMaxed = {}
-            attachFiveMClicksPromptListener()
-            FiveMClicksAutoConn = RunService.Heartbeat:Connect(function(dt)
-                FiveMClicksAutoAccum += dt
-                if FiveMClicksAutoAccum >= FiveMClicksAutoInterval then
-                    FiveMClicksAutoAccum = 0
-                    local remote = getMainRemote and getMainRemote() or nil
-                    if not remote then return end
-                    local now = os.clock()
-                    if now - FiveMClicksLastClick < getGlobalClickCooldown("FiveMClicks") then
-                        return
-                    end
-                    local action = FiveMClicksUseUpgradeAll and "UpgradeAll" or "Upgrade"
-                    local name = getNextFiveMClicksName()
-                    if name then
-                        pcall(function()
-                            remote:FireServer(action, "Clicks", name)
-                        end)
-                    else
-                        return
-                    end
-                    FiveMClicksLastClick = now
-                end
-            end)
-            trackConnection(FiveMClicksAutoConn)
-        else
-            if FiveMClicksAutoConn then
-                FiveMClicksAutoConn:Disconnect()
-                FiveMClicksAutoConn = nil
-            end
-            detachFiveMClicksPromptListener()
-        end
-    end)
-
-    addFiveMClicksControl(createToggle(FiveMClicksBox, "Mode: Upgrade All", nil, true, function(v)
-        FiveMClicksUseUpgradeAll = v
-    end))
-
-    addFiveMClicksControl(createSlider(FiveMClicksBox, "Click Speed (sec)", nil, 0.1, 5, FiveMClicksDefaultClickCooldown, function(v)
-        setGlobalClickCooldown("FiveMClicks", v)
-    end, 1))
-
-    addFiveMClicksControl(createToggle(FiveMClicksBox, "Skip Maxed Items", nil, true, function(v)
-        FiveMClicksSkipMaxed = v
-    end))
-
-    local FiveMClicksListContainer
-    addFiveMClicksControl(createListDropdownRow(FiveMClicksBox, "Item List", function(open)
-        if FiveMClicksListContainer then
-            FiveMClicksListContainer.Visible = open
-        end
-    end))
-
-    local FiveMClicksListContent = createSubSectionBox(FiveMClicksBox, "Item List")
-    FiveMClicksListContainer = FiveMClicksListContent.Parent
-    FiveMClicksListContainer.Visible = false
-
-    for _, name in ipairs(State.FiveMClicksAutoOrder) do
-        addFiveMClicksControl(createToggle(FiveMClicksListContent, name, nil, true, function(v)
-            FiveMClicksItemEnabled[name] = v
-        end))
-    end
-
-    setControlsEnabled(FiveMClicksControls, false)
+    })
 end
 
 if State.InitValentine then
@@ -8480,43 +10524,40 @@ end
 do
     local HeavenAutomationSection = createSectionBox(State.Tabs.Heaven:GetPage(), "Automation")
 
-    setupHeavenAutoShop(HeavenAutomationSection, {
-        ToggleName = "Auto Buy Grace Shop",
-        DisplayName = "Auto Buy Grace Shop",
+    setupAutoBuyGroup(HeavenAutomationSection, {
+        GroupKey = "Heaven World",
+        DisplayName = "Auto Buy Shop",
         ModeToggleName = "Mode: Upgrade All",
         SpeedLabel = "Click Speed (sec)",
-        ShopName = "Grace",
-        Items = {
-            "Grace",
-            "Grace II",
-            "Heavenly Luck",
-            "Heavenly Luck II",
-            "Heavenly Bulk",
-            "Heavenly Bulk II",
-            "Heaven Points"
-        },
-        CooldownKey = "Grace",
+        CooldownKey = "HeavenAutoBuy",
         DefaultCooldown = 0.6,
-        StateIndexKey = "GraceAutoIndex",
-        StateOrderKey = "GraceAutoOrder"
-    })
-
-    setupHeavenAutoShop(HeavenAutomationSection, {
-        ToggleName = "Auto Buy Divinity Shop",
-        DisplayName = "Auto Buy Divinity Shop",
-        ModeToggleName = "Mode: Upgrade All",
-        SpeedLabel = "Click Speed (sec)",
-        ShopName = "Divinity",
-        Items = {
-            "Glory",
-            "Divinity",
-            "Heaven Points",
-            "Heavenly Bulk"
-        },
-        CooldownKey = "Divinity",
-        DefaultCooldown = 0.6,
-        StateIndexKey = "DivinityAutoIndex",
-        StateOrderKey = "DivinityAutoOrder"
+        Shops = {
+            {
+                Key = "Grace",
+                DisplayName = "Grace Shop",
+                ShopName = "Grace",
+                Items = {
+                    "Grace",
+                    "Grace II",
+                    "Heavenly Luck",
+                    "Heavenly Luck II",
+                    "Heavenly Bulk",
+                    "Heavenly Bulk II",
+                    "Heaven Points"
+                }
+            },
+            {
+                Key = "Divinity",
+                DisplayName = "Divinity Shop",
+                ShopName = "Divinity",
+                Items = {
+                    "Glory",
+                    "Divinity",
+                    "Heaven Points",
+                    "Heavenly Bulk"
+                }
+            }
+        }
     })
 end
 
@@ -8587,30 +10628,34 @@ local function initSpaceAutomation()
     -- =====================================================
     -- [SECTION] Space World - Auto Buy Light Points Shop
     -- =====================================================
-    setupAutoShop(AutomationSection, {
-        ToggleName = "Auto Buy Light Points Shop",
-        DisplayName = "Auto Buy Light Points Shop",
+    setupAutoBuyGroup(AutomationSection, {
+        GroupKey = "Space World",
+        DisplayName = "Auto Buy Shop",
         ModeToggleName = "Light Points Mode: Upgrade All",
         SpeedLabel = "Light Points Click Speed (sec)",
-        ShopName = "Light Points",
-        Items = {
-            "Light Points Multiplier",
-            "Light Points Multiplier II",
-            "Cosmic Points",
-            "Cosmic Points II",
-            "Cosmic Luck",
-            "Cosmic Bulk",
-            "Cosmic Speed",
-            "Cosmic Luck II",
-            "Rune Luck",
-            "Rune Bulk",
-            "Neptunite",
-            "Plutite"
-        },
         CooldownKey = "LightPoints",
         DefaultCooldown = 0.6,
-        StateIndexKey = "LightAutoIndex",
-        StateOrderKey = "LightAutoOrder"
+        Shops = {
+            {
+                Key = "Light Points",
+                DisplayName = "Light Points Shop",
+                ShopName = "Light Points",
+                Items = {
+                    "Light Points Multiplier",
+                    "Light Points Multiplier II",
+                    "Cosmic Points",
+                    "Cosmic Points II",
+                    "Cosmic Luck",
+                    "Cosmic Bulk",
+                    "Cosmic Speed",
+                    "Cosmic Luck II",
+                    "Rune Luck",
+                    "Rune Bulk",
+                    "Neptunite",
+                    "Plutite"
+                }
+            }
+        }
     })
 end
 
@@ -8618,8 +10663,11 @@ initSpaceAutomation()
 
 end
 
+LoadingUI:Set(80, "Menyusun world tabs...")
 initWorldTabs()
+LoadingUI:Set(86, "Menyiapkan teleport...")
 initRuneLocationTab()
+LoadingUI:Set(90, "Menyelesaikan layout...")
 
 -- =====================================================
 -- INITIAL STATE
@@ -8627,15 +10675,14 @@ initRuneLocationTab()
 applyTheme(Config.Theme or "Default")
 HomeTab:Show()
 
-LoadingUI:Set(85, "Menyiapkan UI...")
-task.wait(0.02)
+LoadingUI:Set(92, "Menyiapkan UI...")
 
 LoadingUI:Set(98, "Finishing...")
-task.wait(0.02)
 
 Main.Visible = true
 task.delay(0.1, function()
     if LoadingUI.Card then
         LoadingUI.Card:Destroy()
     end
+    notify("Script Loaded", "Script berhasil", 5)
 end)
