@@ -1,5 +1,5 @@
 -- =====================================================
--- UI Garden Incremental V1.0.31
+-- UI Garden Incremental V1.0.46
 -- =====================================================
 -- [WORK RULES]
 -- 1. Fitur baru: jangan tambah local di top-level; bungkus di fungsi/table (hindari limit 200).
@@ -39,13 +39,11 @@ local State = {
     OldNamecall = nil,
     Hooked = false,
     RemoteHookEnabled = false,
-    RemoteHookConn = nil,
-    C2SLastCapture = "",
-    C2SCaptureArmed = false,
-    C2SCaptureExpires = 0
+    RemoteC2SEnabled = false,
+    RemoteHookConn = nil
 }
 
-State.Version = "V1.0.31"
+State.Version = "V1.0.46"
 State.ValidateVersion = function(labelText)
     if type(labelText) ~= "string" then
         return false
@@ -291,11 +289,8 @@ local Config = {
     ManualFullBrightShadows = false,
     FirstRun = true,
     ActionLogger = false,
-    RemoteSpy = false,
-    RemoteLogger = false,
     Theme = "Default",
     Font = "Gotham",
-    LogFilter = "",
     UtilityTrackNames = "",
     UtilityTrackValues = true,
     UtilityTrackAttributes = true,
@@ -305,6 +300,7 @@ local Config = {
     HellStarterEnabled = false,
     HellStarterUseUpgradeAll = true,
     HellStarterSkipMaxed = true,
+    HellStarterSkipMaxedDropper = true,
     HellStarterClickSpeed = 0.6,
     HellStarterTeleportEnabled = false,
     HellStarterTeleportHold = 15,
@@ -509,49 +505,56 @@ local Themes = {
         Panel = Color3.fromRGB(40, 40, 48),
         Accent = Color3.fromRGB(0, 170, 255),
         Text = Color3.fromRGB(235, 235, 235),
-        Muted = Color3.fromRGB(170, 170, 170)
+        Muted = Color3.fromRGB(170, 170, 170),
+        Skip = Color3.fromRGB(90, 50, 50)
     },
     Dark = {
         Main = Color3.fromRGB(20, 20, 24),
         Panel = Color3.fromRGB(32, 32, 40),
         Accent = Color3.fromRGB(255, 120, 0),
         Text = Color3.fromRGB(235, 235, 235),
-        Muted = Color3.fromRGB(150, 150, 150)
+        Muted = Color3.fromRGB(150, 150, 150),
+        Skip = Color3.fromRGB(85, 45, 45)
     },
     Light = {
         Main = Color3.fromRGB(235, 235, 235),
         Panel = Color3.fromRGB(250, 250, 250),
         Accent = Color3.fromRGB(0, 120, 255),
         Text = Color3.fromRGB(35, 35, 35),
-        Muted = Color3.fromRGB(90, 90, 90)
+        Muted = Color3.fromRGB(90, 90, 90),
+        Skip = Color3.fromRGB(255, 215, 215)
     },
     Ocean = {
         Main = Color3.fromRGB(16, 26, 36),
         Panel = Color3.fromRGB(22, 36, 48),
         Accent = Color3.fromRGB(0, 200, 200),
         Text = Color3.fromRGB(220, 240, 245),
-        Muted = Color3.fromRGB(140, 170, 180)
+        Muted = Color3.fromRGB(140, 170, 180),
+        Skip = Color3.fromRGB(90, 55, 60)
     },
     Mint = {
         Main = Color3.fromRGB(20, 28, 28),
         Panel = Color3.fromRGB(28, 40, 40),
         Accent = Color3.fromRGB(64, 220, 180),
         Text = Color3.fromRGB(235, 245, 242),
-        Muted = Color3.fromRGB(160, 190, 185)
+        Muted = Color3.fromRGB(160, 190, 185),
+        Skip = Color3.fromRGB(95, 55, 55)
     },
     Sunset = {
         Main = Color3.fromRGB(28, 22, 30),
         Panel = Color3.fromRGB(40, 30, 44),
         Accent = Color3.fromRGB(255, 120, 90),
         Text = Color3.fromRGB(240, 230, 240),
-        Muted = Color3.fromRGB(170, 155, 180)
+        Muted = Color3.fromRGB(170, 155, 180),
+        Skip = Color3.fromRGB(110, 60, 60)
     },
     Aurora = {
         Main = Color3.fromRGB(18, 24, 36),
         Panel = Color3.fromRGB(26, 34, 52),
         Accent = Color3.fromRGB(120, 190, 255),
         Text = Color3.fromRGB(230, 238, 245),
-        Muted = Color3.fromRGB(150, 165, 185)
+        Muted = Color3.fromRGB(150, 165, 185),
+        Skip = Color3.fromRGB(90, 55, 60)
     }
 }
 
@@ -578,8 +581,6 @@ local ActiveTabButton
 local NamecallLogHandler
 local getMainRemote
 local setRemoteHooking
-local addLogEntry
-local addLog
 local confirmDialog
 local TeleportButtons = {}
 local ActiveTeleportButton
@@ -900,6 +901,7 @@ TitleBar.Font = Enum.Font.GothamSemibold
 TitleBar.TextSize = 16
 TitleBar.TextXAlignment = Enum.TextXAlignment.Left
 TitleBar.Parent = Main
+TitleBar.Active = true
 registerTheme(TitleBar, "TextColor3", "Text")
 
 local VersionLabel = Instance.new("TextLabel")
@@ -999,7 +1001,7 @@ end
 setMainAnchorTopRight()
 
 trackConnection(TitleBar.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
         Dragging = true
         DragMoved = false
         DragStart = input.Position
@@ -1019,7 +1021,7 @@ trackConnection(MinimizedIcon.InputBegan:Connect(function(input)
     if not Minimized then
         return
     end
-    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
         Dragging = true
         DragMoved = false
         DragStart = input.Position
@@ -1036,7 +1038,7 @@ trackConnection(MinimizedIcon.InputBegan:Connect(function(input)
 end))
 
 trackConnection(UIS.InputChanged:Connect(function(input)
-    if Dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+    if Dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
         local delta = input.Position - DragStart
         if delta.Magnitude > 3 then
             DragMoved = true
@@ -1257,7 +1259,7 @@ local handleMap = {
 
 for _, h in ipairs(ResizeHandles) do
     trackConnection(h.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
             local now = os.clock()
             if ResizeClickHandle ~= h or (now - ResizeClickTime) > 0.35 then
                 ResizeClickCount = 0
@@ -1276,13 +1278,13 @@ for _, h in ipairs(ResizeHandles) do
 end
 
 trackConnection(UIS.InputChanged:Connect(function(input)
-    if Resizing and input.UserInputType == Enum.UserInputType.MouseMovement then
+    if Resizing and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
         updateResize(input)
     end
 end))
 
 trackConnection(UIS.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
         endResize()
         if Dragging then
             SavedPos = Main.Position
@@ -1923,6 +1925,7 @@ local function createSlider(parent, text, flag, rangeMin, rangeMax, currentValue
     bar.Position = UDim2.new(0, 10, 0, 26)
     bar.BorderSizePixel = 0
     bar.Parent = frame
+    bar.Active = true
     registerTheme(bar, "BackgroundColor3", "Panel")
     addCorner(bar, 6)
 
@@ -1952,7 +1955,7 @@ local function createSlider(parent, text, flag, rangeMin, rangeMax, currentValue
         if disabled then
             return
         end
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
             dragging = true
             local pos = (input.Position.X - bar.AbsolutePosition.X) / bar.AbsoluteSize.X
             setValue(rangeMin + (rangeMax - rangeMin) * pos, false)
@@ -1960,14 +1963,14 @@ local function createSlider(parent, text, flag, rangeMin, rangeMax, currentValue
     end)
 
     trackConnection(UIS.InputChanged:Connect(function(input)
-        if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
             local pos = (input.Position.X - bar.AbsolutePosition.X) / bar.AbsoluteSize.X
             setValue(rangeMin + (rangeMax - rangeMin) * pos, false)
         end
     end))
 
     trackConnection(UIS.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
             dragging = false
         end
     end))
@@ -2006,6 +2009,7 @@ local AutoBuyLogState = {
     GroupUI = {},
     ActiveItem = {},
     LastActive = {},
+    SkippedMaxed = {},
     ScreenGui = nil,
     Frame = nil,
     Content = nil,
@@ -2313,6 +2317,7 @@ local function createAutoBuyLogUI()
     titleBar.TextXAlignment = Enum.TextXAlignment.Left
     titleBar.Text = "Auto Buy Log"
     titleBar.Parent = frame
+    titleBar.Active = true
     registerTheme(titleBar, "TextColor3", "Text")
 
     local countLabel = Instance.new("TextLabel")
@@ -2392,13 +2397,13 @@ local function createAutoBuyLogUI()
     end
 
     titleBar.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
             beginDrag(input)
         end
     end)
 
     UIS.InputChanged:Connect(function(input)
-        if AutoBuyLogState.Dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+        if AutoBuyLogState.Dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
             local delta = input.Position - AutoBuyLogState.DragStart
             if delta.X ~= 0 or delta.Y ~= 0 then
                 AutoBuyLogState.UserMoved = true
@@ -2556,6 +2561,13 @@ local function rebuildAutoBuyLogContent()
                         label.Parent = row
                         registerTheme(label, "TextColor3", "Text")
 
+                        local skipped = AutoBuyLogState.SkippedMaxed[groupKey]
+                            and AutoBuyLogState.SkippedMaxed[groupKey][shopKey]
+                            and AutoBuyLogState.SkippedMaxed[groupKey][shopKey][item]
+                        if AutoBuyLogState.ApplyRowStyle then
+                            AutoBuyLogState.ApplyRowStyle(row, skipped)
+                        end
+
                         AutoBuyLogState.GroupUI[groupKey].Rows[shopKey][item] = {
                             Row = row,
                             Indicator = indicator,
@@ -2635,8 +2647,50 @@ local function setAutoBuyGroupActive(groupKey, displayName, enabled, shops, shop
         AutoBuyLogState.ActiveGroups[groupKey] = nil
         AutoBuyLogState.ActiveItem[groupKey] = nil
         AutoBuyLogState.LastActive[groupKey] = nil
+        AutoBuyLogState.SkippedMaxed[groupKey] = nil
     end
     updateAutoBuyLogUI()
+end
+
+State.ResolveMaxedMatches = function(lowerMsg, items)
+    if type(lowerMsg) ~= "string" or type(items) ~= "table" then
+        return {}
+    end
+    local matches = {}
+    for _, entry in ipairs(items) do
+        local itemName = entry and entry.Item
+        if type(itemName) == "string" then
+            local lowerItem = string.lower(itemName)
+            if string.find(lowerMsg, lowerItem, 1, true) then
+                matches[#matches + 1] = {
+                    Key = entry.Key,
+                    Item = itemName,
+                    Lower = lowerItem,
+                    Len = #lowerItem
+                }
+            end
+        end
+    end
+    if #matches <= 1 then
+        return matches
+    end
+    table.sort(matches, function(a, b)
+        return (a.Len or 0) > (b.Len or 0)
+    end)
+    local accepted = {}
+    for _, m in ipairs(matches) do
+        local covered = false
+        for _, a in ipairs(accepted) do
+            if a.Lower and m.Lower and string.find(a.Lower, m.Lower, 1, true) then
+                covered = true
+                break
+            end
+        end
+        if not covered then
+            accepted[#accepted + 1] = m
+        end
+    end
+    return accepted
 end
 
 AutoBuyLogState.UpdateGroupActiveIndicator = function(groupKey)
@@ -2671,6 +2725,92 @@ AutoBuyLogState.SetActiveItem = function(groupKey, shopKey, itemName)
     AutoBuyLogState.ActiveItem[groupKey] = {Shop = shopKey, Item = itemName}
     if AutoBuyLogState.UpdateGroupActiveIndicator then
         AutoBuyLogState.UpdateGroupActiveIndicator(groupKey)
+    end
+end
+
+AutoBuyLogState.ApplyRowStyle = function(row, skipped)
+    if not row then
+        return
+    end
+    local theme = getTheme(Config.Theme)
+    if skipped then
+        row.BackgroundColor3 = theme.Skip or theme.Main
+    else
+        row.BackgroundColor3 = theme.Main
+    end
+end
+
+AutoBuyLogState.ApplySkipStyles = function(groupKey)
+    local theme = getTheme(Config.Theme)
+    local function applyRow(row, skipped)
+        if not row then
+            return
+        end
+        row.BackgroundColor3 = skipped and (theme.Skip or theme.Main) or theme.Main
+    end
+
+    local function isSkipped(gk, sk, name)
+        return AutoBuyLogState.SkippedMaxed[gk]
+            and AutoBuyLogState.SkippedMaxed[gk][sk]
+            and AutoBuyLogState.SkippedMaxed[gk][sk][name]
+            or false
+    end
+
+    if groupKey then
+        local ui = AutoBuyLogState.GroupUI[groupKey]
+        if not ui or not ui.Rows then
+            return
+        end
+        for shopKey, items in pairs(ui.Rows) do
+            for itemName, rowInfo in pairs(items) do
+                applyRow(rowInfo and rowInfo.Row, isSkipped(groupKey, shopKey, itemName))
+            end
+        end
+        return
+    end
+
+    for gk, ui in pairs(AutoBuyLogState.GroupUI) do
+        if ui and ui.Rows then
+            for shopKey, items in pairs(ui.Rows) do
+                for itemName, rowInfo in pairs(items) do
+                    applyRow(rowInfo and rowInfo.Row, isSkipped(gk, shopKey, itemName))
+                end
+            end
+        end
+    end
+end
+
+AutoBuyLogState.SetItemSkipped = function(groupKey, shopKey, itemName, skipped)
+    if not groupKey or not shopKey or not itemName then
+        return
+    end
+    if skipped then
+        AutoBuyLogState.SkippedMaxed[groupKey] = AutoBuyLogState.SkippedMaxed[groupKey] or {}
+        AutoBuyLogState.SkippedMaxed[groupKey][shopKey] = AutoBuyLogState.SkippedMaxed[groupKey][shopKey] or {}
+        AutoBuyLogState.SkippedMaxed[groupKey][shopKey][itemName] = true
+    elseif AutoBuyLogState.SkippedMaxed[groupKey] and AutoBuyLogState.SkippedMaxed[groupKey][shopKey] then
+        AutoBuyLogState.SkippedMaxed[groupKey][shopKey][itemName] = nil
+    end
+
+    local ui = AutoBuyLogState.GroupUI[groupKey]
+    if ui and ui.Rows and ui.Rows[shopKey] and ui.Rows[shopKey][itemName] then
+        AutoBuyLogState.ApplyRowStyle(ui.Rows[shopKey][itemName].Row, skipped)
+    end
+end
+
+AutoBuyLogState.ClearSkippedGroup = function(groupKey)
+    if not groupKey then
+        return
+    end
+    AutoBuyLogState.SkippedMaxed[groupKey] = nil
+    if AutoBuyLogState.ApplySkipStyles then
+        AutoBuyLogState.ApplySkipStyles(groupKey)
+    end
+end
+
+ToggleRenders[#ToggleRenders + 1] = function()
+    if AutoBuyLogState and AutoBuyLogState.ApplySkipStyles then
+        AutoBuyLogState.ApplySkipStyles()
     end
 end
 
@@ -2762,6 +2902,7 @@ State.FullAutomationLog.CreateUI = function()
     titleBar.TextXAlignment = Enum.TextXAlignment.Left
     titleBar.Text = "Full Automation Log"
     titleBar.Parent = frame
+    titleBar.Active = true
     registerTheme(titleBar, "TextColor3", "Text")
 
     local countLabel = Instance.new("TextLabel")
@@ -2841,13 +2982,13 @@ State.FullAutomationLog.CreateUI = function()
     end
 
     titleBar.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
             beginDrag(input)
         end
     end)
 
     UIS.InputChanged:Connect(function(input)
-        if State.FullAutomationLog.Dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+        if State.FullAutomationLog.Dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
             local delta = input.Position - State.FullAutomationLog.DragStart
             if delta.X ~= 0 or delta.Y ~= 0 then
                 State.FullAutomationLog.UserMoved = true
@@ -3137,12 +3278,22 @@ local function setupAutoBuyGroup(section, opts)
             if not string.find(lower, "already reached max upgrade", 1, true) then
                 return
             end
+            local candidates = {}
             for _, shop in ipairs(shops) do
                 local key = shop.Key
                 for _, item in ipairs(shop.Items or {}) do
-                    if string.find(lower, string.lower(item), 1, true) then
-                        maxed[key] = maxed[key] or {}
-                        maxed[key][item] = true
+                    candidates[#candidates + 1] = {Key = key, Item = item}
+                end
+            end
+            local resolved = State.ResolveMaxedMatches and State.ResolveMaxedMatches(lower, candidates) or {}
+            for _, entry in ipairs(resolved) do
+                local key = entry.Key
+                local item = entry.Item
+                if key and item then
+                    maxed[key] = maxed[key] or {}
+                    maxed[key][item] = true
+                    if AutoBuyLogState.SetItemSkipped then
+                        AutoBuyLogState.SetItemSkipped(groupKey, key, item, true)
                     end
                 end
             end
@@ -3211,6 +3362,9 @@ local function setupAutoBuyGroup(section, opts)
             shopIndex = 1
             itemIndex = {}
             maxed = {}
+            if AutoBuyLogState.ClearSkippedGroup then
+                AutoBuyLogState.ClearSkippedGroup(groupKey)
+            end
             attachPromptListener()
             conn = RunService.Heartbeat:Connect(function(dt)
                 accum += dt
@@ -3728,6 +3882,7 @@ confirmDialog = function(title, content, onConfirm)
     titleBar.Text = title or "Konfirmasi"
     titleBar.ZIndex = 201
     titleBar.Parent = dialog
+    titleBar.Active = true
     registerTheme(titleBar, "TextColor3", "Text")
 
     local line = Instance.new("Frame")
@@ -3835,13 +3990,13 @@ confirmDialog = function(title, content, onConfirm)
     end
 
     titleBar.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
             beginDrag(input)
         end
     end)
 
     UIS.InputChanged:Connect(function(input)
-        if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
             local delta = input.Position - dragStart
             dialog.Position = UDim2.new(
                 startPos.X.Scale,
@@ -5059,508 +5214,6 @@ createToggle(State.DevSections.Currency, "Auto Mode (Event Driven)", nil, false,
     end
 end)
 
-local function initRemoteTools()
-    local RemoteToolsSection = createSectionBox(DevTab:GetPage(), "Remote Tools")
-    local RemoteToolsControls = {}
-
-    local function addControl(ctrl)
-        RemoteToolsControls[#RemoteToolsControls + 1] = ctrl
-        return ctrl
-    end
-
-    local RemoteToolsEnabled = false
-    local RemoteSpy = false
-    local RemoteLoggerEnabled = false
-
-    local function setRemoteToolsEnabled(enabled)
-        RemoteToolsEnabled = enabled
-        if not enabled then
-            RemoteSpy = false
-            RemoteLoggerEnabled = false
-            State.C2SCaptureArmed = false
-        end
-        if setRemoteHooking then
-            setRemoteHooking(enabled)
-        end
-        for _, ctrl in ipairs(RemoteToolsControls) do
-            if ctrl and ctrl.SetEnabled then
-                ctrl:SetEnabled(enabled)
-            end
-        end
-    end
-
-    createToggle(RemoteToolsSection, "Enable Remote Tools (Hook Remotes)", nil, false, function(v)
-        setRemoteToolsEnabled(v)
-    end)
-
-    createSubSection(RemoteToolsSection, "Remote Spy (Client-Side)")
-
-    local function simpleSerialize(v)
-        local t = typeof(v)
-        if t == "Instance" then
-            return "<Instance " .. v.ClassName .. "> " .. v:GetFullName()
-        elseif t == "Vector3" then
-            return ("<Vector3 %.3f, %.3f, %.3f>"):format(v.X, v.Y, v.Z)
-        elseif t == "CFrame" then
-            local x, y, z = v.Position.X, v.Position.Y, v.Position.Z
-            return ("<CFrame %.3f, %.3f, %.3f>"):format(x, y, z)
-        elseif t == "Color3" then
-            return ("<Color3 %.3f, %.3f, %.3f>"):format(v.R, v.G, v.B)
-        elseif t == "EnumItem" then
-            return tostring(v)
-        elseif t == "table" then
-            local parts = {}
-            local count = 0
-            for k, val in pairs(v) do
-                count = count + 1
-                if count > 8 then
-                    parts[#parts + 1] = "..."
-                    break
-                end
-                parts[#parts + 1] = "[" .. tostring(k) .. "]=" .. simpleSerialize(val)
-            end
-            return "{ " .. table.concat(parts, ", ") .. " }"
-        end
-        return tostring(v)
-    end
-
-    addControl(createToggle(RemoteToolsSection, "Enable Remote Spy", nil, false, function(Value)
-        if not RemoteToolsEnabled then
-            return
-        end
-        RemoteSpy = Value
-    end))
-
-    if hookfunction and getrawmetatable and setreadonly and newcclosure then
-        local mt = getrawmetatable(game)
-        setreadonly(mt, false)
-
-        local old = mt.__namecall
-        mt.__namecall = newcclosure(function(self, ...)
-            local method = getnamecallmethod()
-            local args = {...}
-
-            if RemoteToolsEnabled and RemoteSpy and (method == "FireServer" or method == "InvokeServer") then
-                print("========== REMOTE SPY ==========")
-                print("Remote:", self:GetFullName())
-                print("Method:", method)
-                for i, v in ipairs(args) do
-                    print("Arg[" .. i .. "]:", v)
-                end
-            end
-
-    local allow = true
-    if NamecallLogHandler then
-        local ok, res = pcall(NamecallLogHandler, self, method, args)
-        if ok and res == false then
-            allow = false
-        end
-    end
-
-    if not allow then
-        return nil
-    end
-
-    return old(self, ...)
-end)
-        State.Mt = mt
-        State.OldNamecall = old
-        State.Hooked = true
-        setreadonly(mt, true)
-    end
-
-    createSubSection(RemoteToolsSection, "Remote Logger")
-
-    RemoteLoggerEnabled = false
-    local RemoteLoggerIncludeC2S = true
-    local RemoteLoggerIncludeS2C = true
-    local MaxLogs = 40
-    local Logs = {}
-    local LogFilterText = Config.LogFilter or ""
-
-    local function parseFilters(text)
-        local out = {}
-        for token in string.gmatch(text or "", "([^,]+)") do
-            local t = string.lower(string.gsub(token, "^%s*(.-)%s*$", "%1"))
-            if t ~= "" then
-                out[#out + 1] = t
-            end
-        end
-        return out
-    end
-
-    local function isFiltered(fullText)
-        local filters = parseFilters(LogFilterText)
-        if #filters == 0 then
-            return false
-        end
-        local lowerText = string.lower(fullText)
-        for _, f in ipairs(filters) do
-            if string.find(lowerText, f, 1, true) then
-                return true
-            end
-        end
-        return false
-    end
-
-    local function refreshFilters()
-        for _, item in ipairs(Logs) do
-            if item and item.Frame then
-                item.Frame.Visible = not isFiltered(item.Text or "")
-            end
-        end
-    end
-
-    local function serializeValue(v, depth, seen)
-        depth = depth or 0
-        seen = seen or {}
-        if depth > 3 then
-            return "<depth>"
-        end
-        local t = typeof(v)
-        if t == "Instance" then
-            return "<Instance " .. v.ClassName .. "> " .. v:GetFullName()
-        elseif t == "Vector3" then
-            return ("<Vector3 %.3f, %.3f, %.3f>"):format(v.X, v.Y, v.Z)
-        elseif t == "CFrame" then
-            local x, y, z = v.Position.X, v.Position.Y, v.Position.Z
-            return ("<CFrame %.3f, %.3f, %.3f>"):format(x, y, z)
-        elseif t == "Color3" then
-            return ("<Color3 %.3f, %.3f, %.3f>"):format(v.R, v.G, v.B)
-        elseif t == "EnumItem" then
-            return tostring(v)
-        elseif t == "table" then
-            if seen[v] then
-                return "<table:ref>"
-            end
-            seen[v] = true
-            local parts = {}
-            local count = 0
-            for k, val in pairs(v) do
-                count = count + 1
-                if count > 20 then
-                    parts[#parts + 1] = "..."
-                    break
-                end
-                local key = "[" .. serializeValue(k, depth + 1, seen) .. "]"
-                local value = serializeValue(val, depth + 1, seen)
-                parts[#parts + 1] = key .. " = " .. value
-            end
-            return "{ " .. table.concat(parts, ", ") .. " }"
-        end
-        return tostring(v)
-    end
-
-    addControl(createToggle(RemoteToolsSection, "Enable Remote Logger", nil, false, function(v)
-        if not RemoteToolsEnabled then
-            return
-        end
-        RemoteLoggerEnabled = v
-    end))
-
-    addControl(createToggle(RemoteToolsSection, "Log Client->Server (Fire/Invoke)", nil, true, function(v)
-        if not RemoteToolsEnabled then
-            return
-        end
-        RemoteLoggerIncludeC2S = v
-    end))
-
-    addControl(createToggle(RemoteToolsSection, "Log Server->Client (OnClient)", nil, true, function(v)
-        if not RemoteToolsEnabled then
-            return
-        end
-        RemoteLoggerIncludeS2C = v
-    end))
-
-    addControl(createInput(RemoteToolsSection, "Filter (comma)", "LogFilter", LogFilterText, function(v)
-        if not RemoteToolsEnabled then
-            return
-        end
-        LogFilterText = v or ""
-        refreshFilters()
-    end))
-
-    addControl(createButton(RemoteToolsSection, "Clear All Logs", function()
-        if not RemoteToolsEnabled then
-            return
-        end
-        for i = #Logs, 1, -1 do
-            if Logs[i].Frame then
-                Logs[i].Frame:Destroy()
-            end
-            table.remove(Logs, i)
-        end
-    end))
-
-    addControl(createButton(RemoteToolsSection, "Copy Last C2S", function()
-        if not RemoteToolsEnabled then
-            return
-        end
-        if State.C2SLastCapture == "" then
-            notify("C2S", "Belum ada capture", 2)
-            return
-        end
-        if setclipboard then
-            pcall(setclipboard, State.C2SLastCapture)
-            notify("C2S", "Copied last C2S", 2)
-        else
-            notify("Copy Failed", "setclipboard tidak tersedia", 2)
-        end
-    end))
-
-    addControl(createButton(RemoteToolsSection, "Arm C2S Capture (8s)", function()
-        if not RemoteToolsEnabled then
-            return
-        end
-        State.C2SLastCapture = ""
-        State.C2SCaptureArmed = true
-        State.C2SCaptureExpires = os.clock() + 8
-        notify("C2S Capture", "Klik Buy/Buy All dalam 8 detik", 3)
-    end))
-
-    addControl(createButton(RemoteToolsSection, "C2S Hook Status", function()
-        if not RemoteToolsEnabled then
-            return
-        end
-        local okHook = (hookfunction and getrawmetatable and setreadonly and newcclosure) and true or false
-        local active = State.Hooked and State.Mt and State.OldNamecall and true or false
-        notify("C2S Status", "hookfn=" .. tostring(okHook) .. " | active=" .. tostring(active), 3)
-    end))
-
-    local LogContainer = createContainer(RemoteToolsSection, 200)
-    local LogTitle = Instance.new("TextLabel")
-    LogTitle.Size = UDim2.new(1, 0, 0, 18)
-    LogTitle.BackgroundTransparency = 1
-    LogTitle.Font = Enum.Font.GothamSemibold
-    LogTitle.TextSize = 12
-    LogTitle.TextXAlignment = Enum.TextXAlignment.Left
-    LogTitle.Text = "Logs (Client<->Server Remotes)"
-    LogTitle.Parent = LogContainer
-    registerTheme(LogTitle, "TextColor3", "Text")
-
-    local LogScroll = Instance.new("ScrollingFrame")
-    LogScroll.Size = UDim2.new(1, 0, 1, -22)
-    LogScroll.Position = UDim2.new(0, 0, 0, 20)
-    LogScroll.BorderSizePixel = 0
-    LogScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
-    LogScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
-    LogScroll.ScrollBarThickness = 6
-    LogScroll.ScrollingDirection = Enum.ScrollingDirection.Y
-    LogScroll.ClipsDescendants = true
-    LogScroll.Parent = LogContainer
-    registerTheme(LogScroll, "BackgroundColor3", "Panel")
-
-    local LogList = Instance.new("UIListLayout")
-    LogList.Padding = UDim.new(0, 6)
-    LogList.SortOrder = Enum.SortOrder.LayoutOrder
-    LogList.Parent = LogScroll
-
-    trackConnection(LogList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
-        LogScroll.CanvasSize = UDim2.new(0, 0, 0, LogList.AbsoluteContentSize.Y + 12)
-    end))
-
-    local LogPad = Instance.new("UIPadding")
-    LogPad.PaddingTop = UDim.new(0, 6)
-    LogPad.PaddingBottom = UDim.new(0, 6)
-    LogPad.PaddingLeft = UDim.new(0, 6)
-    LogPad.PaddingRight = UDim.new(0, 6)
-    LogPad.Parent = LogScroll
-
-    LogFilterText = LogFilterText or ""
-    refreshFilters()
-
-    addLogEntry = function(label, remoteName, args)
-        if not RemoteToolsEnabled or not RemoteLoggerEnabled then return end
-        if label == ".OnClientEvent" and not RemoteLoggerIncludeS2C then return end
-        if (label == ":FireServer" or label == ":InvokeServer" or label == ":FireServer (Unreliable)") and not RemoteLoggerIncludeC2S then
-            return
-        end
-
-        if #Logs >= MaxLogs then
-            if Logs[1] and Logs[1].Frame then
-                Logs[1].Frame:Destroy()
-            end
-            table.remove(Logs, 1)
-        end
-
-        local argText = {}
-        for i, v in ipairs(args) do
-            argText[#argText + 1] = "[" .. i .. "] " .. serializeValue(v)
-        end
-
-        local fullName = remoteName .. " " .. label
-        local content = table.concat(argText, "\n")
-        local fullText = fullName .. "\n" .. content
-
-        local frame = Instance.new("Frame")
-        frame.Size = UDim2.new(1, 0, 0, 0)
-        frame.AutomaticSize = Enum.AutomaticSize.Y
-        frame.BorderSizePixel = 0
-        frame.Parent = LogScroll
-        registerTheme(frame, "BackgroundColor3", "Main")
-
-        local pad = Instance.new("UIPadding")
-        pad.PaddingTop = UDim.new(0, 6)
-        pad.PaddingBottom = UDim.new(0, 6)
-        pad.PaddingLeft = UDim.new(0, 8)
-        pad.PaddingRight = UDim.new(0, 8)
-        pad.Parent = frame
-
-        local header = Instance.new("Frame")
-        header.Size = UDim2.new(1, 0, 0, 18)
-        header.BackgroundTransparency = 1
-        header.Parent = frame
-
-        local title = Instance.new("TextLabel")
-        title.Size = UDim2.new(1, -120, 1, 0)
-        title.BackgroundTransparency = 1
-        title.Font = Enum.Font.GothamSemibold
-        title.TextSize = 12
-        title.TextXAlignment = Enum.TextXAlignment.Left
-        title.Text = fullName
-        title.Parent = header
-        registerTheme(title, "TextColor3", "Text")
-
-        local copyBtn = Instance.new("TextButton")
-        copyBtn.Size = UDim2.new(0, 50, 1, 0)
-        copyBtn.Position = UDim2.new(1, -110, 0, 0)
-        copyBtn.BorderSizePixel = 0
-        copyBtn.Font = Enum.Font.Gotham
-        copyBtn.TextSize = 11
-        copyBtn.Text = "Copy"
-        copyBtn.AutoButtonColor = false
-        copyBtn.Parent = header
-        registerTheme(copyBtn, "BackgroundColor3", "Panel")
-        registerTheme(copyBtn, "TextColor3", "Text")
-
-        local delBtn = Instance.new("TextButton")
-        delBtn.Size = UDim2.new(0, 50, 1, 0)
-        delBtn.Position = UDim2.new(1, -55, 0, 0)
-        delBtn.BorderSizePixel = 0
-        delBtn.Font = Enum.Font.Gotham
-        delBtn.TextSize = 11
-        delBtn.Text = "Del"
-        delBtn.AutoButtonColor = false
-        delBtn.Parent = header
-        registerTheme(delBtn, "BackgroundColor3", "Panel")
-        registerTheme(delBtn, "TextColor3", "Text")
-
-        local body = Instance.new("TextLabel")
-        body.Size = UDim2.new(1, 0, 0, 0)
-        body.AutomaticSize = Enum.AutomaticSize.Y
-        body.BackgroundTransparency = 1
-        body.Font = Enum.Font.Gotham
-        body.TextSize = 12
-        body.TextWrapped = true
-        body.TextXAlignment = Enum.TextXAlignment.Left
-        body.TextYAlignment = Enum.TextYAlignment.Top
-        body.Text = content
-        body.Parent = frame
-        registerTheme(body, "TextColor3", "Muted")
-
-        local list = Instance.new("UIListLayout")
-        list.Padding = UDim.new(0, 4)
-        list.Parent = frame
-
-        copyBtn.MouseButton1Click:Connect(function()
-            if setclipboard then
-                setclipboard(fullText)
-                notify("Copied", "Log disalin ke clipboard", 2)
-            else
-                notify("Copy Failed", "setclipboard tidak tersedia", 2)
-            end
-        end)
-
-        delBtn.MouseButton1Click:Connect(function()
-            for i = #Logs, 1, -1 do
-                if Logs[i] and Logs[i].Frame == frame then
-                    table.remove(Logs, i)
-                    break
-                end
-            end
-            frame:Destroy()
-        end)
-
-        frame.Visible = not isFiltered(fullText)
-        table.insert(Logs, {Frame = frame, Text = fullText})
-    end
-
-    addLog = function(remote, args)
-        addLogEntry(".OnClientEvent", remote:GetFullName(), args)
-    end
-
-    NamecallLogHandler = function(self, method, args)
-        local allow = true
-
-        if allow and RemoteToolsEnabled and RemoteLoggerEnabled then
-            if typeof(self) ~= "Instance" then return allow end
-
-            local class = self.ClassName
-            if not (class == "RemoteEvent" or class == "RemoteFunction" or class == "BindableEvent" or class == "BindableFunction" or class == "UnreliableRemoteEvent") then
-                return allow
-            end
-            if method == "FireServer" then
-                local label = ":FireServer"
-                if class == "UnreliableRemoteEvent" then
-                    label = ":FireServer (Unreliable)"
-                end
-                State.C2SLastCapture = self:GetFullName() .. " " .. label .. "\n" .. table.concat((function()
-                    local out = {}
-                    for i, v in ipairs(args) do
-                        out[#out + 1] = "[" .. i .. "] " .. serializeValue(v)
-                    end
-                    return out
-                end)(), "\n")
-                if State.C2SCaptureArmed then
-                    if os.clock() > State.C2SCaptureExpires then
-                        State.C2SCaptureArmed = false
-                    else
-                        State.C2SCaptureArmed = false
-                        if setclipboard then
-                            pcall(setclipboard, State.C2SLastCapture)
-                        end
-                        notify("C2S Captured", "Captured & copied", 3)
-                    end
-                end
-                addLogEntry(label, self:GetFullName(), args)
-                return allow
-            end
-            if method == "InvokeServer" then
-                State.C2SLastCapture = self:GetFullName() .. " :InvokeServer\n" .. table.concat((function()
-                    local out = {}
-                    for i, v in ipairs(args) do
-                        out[#out + 1] = "[" .. i .. "] " .. serializeValue(v)
-                    end
-                    return out
-                end)(), "\n")
-                if State.C2SCaptureArmed then
-                    if os.clock() > State.C2SCaptureExpires then
-                        State.C2SCaptureArmed = false
-                    else
-                        State.C2SCaptureArmed = false
-                        if setclipboard then
-                            pcall(setclipboard, State.C2SLastCapture)
-                        end
-                        notify("C2S Captured", "Captured & copied", 3)
-                    end
-                end
-                addLogEntry(":InvokeServer", self:GetFullName(), args)
-                return allow
-            end
-            if method == "Fire" then
-                addLogEntry(":Fire", self:GetFullName(), args)
-                return allow
-            end
-        end
-
-        return allow
-    end
-
-    setRemoteToolsEnabled(false)
-end
-
-initRemoteTools()
-
 State.DevSections.Utility = createSectionBox(DevTab:GetPage(), "Utility Logger")
 
 State.UtilityLogger = State.UtilityLogger or {}
@@ -5574,6 +5227,25 @@ State.UtilityLogger.Names = State.UtilityLogger.Names or {}
 State.UtilityLogger.Enabled = Config.UtilityLoggerEnabled == true
 State.UtilityLogger.TrackValues = Config.UtilityTrackValues ~= false
 State.UtilityLogger.TrackAttributes = Config.UtilityTrackAttributes ~= false
+State.UtilityLogger.Groups = State.UtilityLogger.Groups or {}
+State.UtilityLogger.GroupList = State.UtilityLogger.GroupList or {}
+State.UtilityLogger.GroupRows = State.UtilityLogger.GroupRows or {}
+State.UtilityLogger.TotalLogs = State.UtilityLogger.TotalLogs or 0
+State.UtilityLogger.SelectedGroupKey = State.UtilityLogger.SelectedGroupKey or nil
+State.UtilityLogger.SelectedHistoryIndex = State.UtilityLogger.SelectedHistoryIndex or nil
+
+State.UtilityLogger.GetInstPath = State.UtilityLogger.GetInstPath or function(inst)
+    if not inst then
+        return "Unknown"
+    end
+    local ok, res = pcall(function()
+        return inst:GetFullName()
+    end)
+    if ok and res then
+        return res
+    end
+    return tostring(inst)
+end
 
 State.UtilityLogger.ParseNames = State.UtilityLogger.ParseNames or function(text)
     local out = {}
@@ -5620,45 +5292,248 @@ State.UtilityLogger.ClearConns = State.UtilityLogger.ClearConns or function()
     State.UtilityLogger.WatchedAttr = {}
 end
 
-State.UtilityLogger.AddLog = State.UtilityLogger.AddLog or function(text)
-    local ui = State.UtilityLogger.UI
-    if not ui or not ui.Scroll then
+State.UtilityLogger.GetGroupKey = State.UtilityLogger.GetGroupKey or function(kind, inst, name)
+    local base = State.UtilityLogger.GetInstPath(inst)
+    if kind == "ATTR" and name then
+        return "ATTR::" .. base .. "." .. tostring(name)
+    elseif kind == "VALUE" then
+        return "VALUE::" .. base
+    end
+    return "INFO::System"
+end
+
+State.UtilityLogger.GetGroupLabel = State.UtilityLogger.GetGroupLabel or function(kind, inst, name)
+    local base = State.UtilityLogger.GetInstPath(inst)
+    if kind == "ATTR" and name then
+        return "[ATTR] " .. base .. "." .. tostring(name)
+    elseif kind == "VALUE" then
+        return "[VALUE] " .. base
+    end
+    return "[INFO] System"
+end
+
+State.UtilityLogger.UpdateGroupCount = State.UtilityLogger.UpdateGroupCount or function(group)
+    if group and group.UI and group.UI.Count then
+        group.UI.Count.Text = tostring(group.Count or 0)
+    end
+end
+
+State.UtilityLogger.EnsureHistoryEmptyLabel = State.UtilityLogger.EnsureHistoryEmptyLabel or function(group)
+    if not group or not group.UI or not group.UI.HistoryFrame then
         return
     end
-    if #State.UtilityLogger.Logs >= State.UtilityLogger.MaxLogs then
-        if State.UtilityLogger.Logs[1] and State.UtilityLogger.Logs[1].Frame then
-            State.UtilityLogger.Logs[1].Frame:Destroy()
-        end
-        table.remove(State.UtilityLogger.Logs, 1)
+    if group.UI.EmptyLabel then
+        group.UI.EmptyLabel:Destroy()
+        group.UI.EmptyLabel = nil
     end
-    local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(1, 0, 0, 0)
-    frame.AutomaticSize = Enum.AutomaticSize.Y
-    frame.BorderSizePixel = 0
-    frame.Parent = ui.Scroll
-    registerTheme(frame, "BackgroundColor3", "Main")
+    if not group.History or #group.History == 0 then
+        local empty = Instance.new("TextLabel")
+        empty.Size = UDim2.new(1, 0, 0, 18)
+        empty.BackgroundTransparency = 1
+        empty.Font = Enum.Font.Gotham
+        empty.TextSize = 11
+        empty.TextXAlignment = Enum.TextXAlignment.Left
+        empty.Text = "Tidak ada history"
+        empty.Parent = group.UI.HistoryFrame
+        registerTheme(empty, "TextColor3", "Muted")
+        group.UI.EmptyLabel = empty
+    end
+end
 
-    local pad = Instance.new("UIPadding")
-    pad.PaddingTop = UDim.new(0, 6)
-    pad.PaddingBottom = UDim.new(0, 6)
-    pad.PaddingLeft = UDim.new(0, 8)
-    pad.PaddingRight = UDim.new(0, 8)
-    pad.Parent = frame
+State.UtilityLogger.AddHistoryRow = State.UtilityLogger.AddHistoryRow or function(group, index, entry)
+    if not group or not group.UI or not group.UI.HistoryFrame then
+        return
+    end
+    local row = Instance.new("TextButton")
+    row.Size = UDim2.new(1, 0, 0, 22)
+    row.BorderSizePixel = 0
+    row.AutoButtonColor = false
+    row.Parent = group.UI.HistoryFrame
+    registerTheme(row, "BackgroundColor3", "Main")
+    addCorner(row, 6)
 
-    local body = Instance.new("TextLabel")
-    body.Size = UDim2.new(1, 0, 0, 0)
-    body.AutomaticSize = Enum.AutomaticSize.Y
-    body.BackgroundTransparency = 1
-    body.Font = Enum.Font.Gotham
-    body.TextSize = 12
-    body.TextWrapped = true
-    body.TextXAlignment = Enum.TextXAlignment.Left
-    body.TextYAlignment = Enum.TextYAlignment.Top
-    body.Text = text
-    body.Parent = frame
-    registerTheme(body, "TextColor3", "Muted")
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(1, -8, 1, 0)
+    label.Position = UDim2.new(0, 8, 0, 0)
+    label.BackgroundTransparency = 1
+    label.Font = Enum.Font.Gotham
+    label.TextSize = 11
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    local timeText = entry.Time and os.date("%H:%M:%S", entry.Time) or "--:--:--"
+    local valueText = entry.Text ~= nil and tostring(entry.Text) or tostring(entry.Value)
+    label.Text = "#" .. tostring(index) .. " | " .. timeText .. " | " .. valueText
+    label.Parent = row
+    registerTheme(label, "TextColor3", "Text")
 
-    State.UtilityLogger.Logs[#State.UtilityLogger.Logs + 1] = {Frame = frame, Text = text}
+    group.UI.HistoryRows[#group.UI.HistoryRows + 1] = row
+end
+
+State.UtilityLogger.RebuildHistoryList = State.UtilityLogger.RebuildHistoryList or function(group)
+    if not group or not group.UI or not group.UI.HistoryFrame then
+        return
+    end
+    if group.UI.HistoryRows then
+        for i = #group.UI.HistoryRows, 1, -1 do
+            if group.UI.HistoryRows[i] then
+                group.UI.HistoryRows[i]:Destroy()
+            end
+            table.remove(group.UI.HistoryRows, i)
+        end
+    end
+    group.UI.HistoryRows = {}
+    State.UtilityLogger.EnsureHistoryEmptyLabel(group)
+    if group.History then
+        for i, entry in ipairs(group.History) do
+            State.UtilityLogger.AddHistoryRow(group, i, entry)
+        end
+    end
+end
+
+State.UtilityLogger.CreateGroupUI = State.UtilityLogger.CreateGroupUI or function(group)
+    local ui = State.UtilityLogger.UI
+    if not ui or not ui.Scroll then
+        return nil
+    end
+    local container = Instance.new("Frame")
+    container.Size = UDim2.new(1, 0, 0, 0)
+    container.AutomaticSize = Enum.AutomaticSize.Y
+    container.BorderSizePixel = 0
+    container.BackgroundTransparency = 1
+    container.Parent = ui.Scroll
+
+    local layout = Instance.new("UIListLayout")
+    layout.SortOrder = Enum.SortOrder.LayoutOrder
+    layout.Padding = UDim.new(0, 4)
+    layout.Parent = container
+
+    local header = Instance.new("TextButton")
+    header.Size = UDim2.new(1, 0, 0, 26)
+    header.BorderSizePixel = 0
+    header.AutoButtonColor = false
+    header.Parent = container
+    registerTheme(header, "BackgroundColor3", "Main")
+    addCorner(header, 6)
+
+    local count = Instance.new("TextLabel")
+    count.Size = UDim2.new(0, 28, 1, 0)
+    count.Position = UDim2.new(0, 6, 0, 0)
+    count.BackgroundTransparency = 1
+    count.Font = Enum.Font.GothamSemibold
+    count.TextSize = 12
+    count.TextXAlignment = Enum.TextXAlignment.Left
+    count.Text = tostring(group.Count or 0)
+    count.Parent = header
+    registerTheme(count, "TextColor3", "Muted")
+
+    local name = Instance.new("TextLabel")
+    name.Size = UDim2.new(1, -40, 1, 0)
+    name.Position = UDim2.new(0, 36, 0, 0)
+    name.BackgroundTransparency = 1
+    name.Font = Enum.Font.Gotham
+    name.TextSize = 12
+    name.TextXAlignment = Enum.TextXAlignment.Left
+    name.Text = group.DisplayName or "Utility"
+    name.Parent = header
+    registerTheme(name, "TextColor3", "Text")
+
+    local historyFrame = Instance.new("Frame")
+    historyFrame.Size = UDim2.new(1, 0, 0, 0)
+    historyFrame.AutomaticSize = Enum.AutomaticSize.Y
+    historyFrame.BorderSizePixel = 0
+    historyFrame.BackgroundTransparency = 1
+    historyFrame.Visible = false
+    historyFrame.Parent = container
+
+    local historyList = Instance.new("UIListLayout")
+    historyList.SortOrder = Enum.SortOrder.LayoutOrder
+    historyList.Padding = UDim.new(0, 4)
+    historyList.Parent = historyFrame
+
+    local historyPad = Instance.new("UIPadding")
+    historyPad.PaddingLeft = UDim.new(0, 8)
+    historyPad.PaddingRight = UDim.new(0, 8)
+    historyPad.Parent = historyFrame
+
+    header.MouseButton1Click:Connect(function()
+        group.Expanded = not group.Expanded
+        historyFrame.Visible = group.Expanded
+        if group.Expanded then
+            State.UtilityLogger.RebuildHistoryList(group)
+        end
+    end)
+
+    group.UI = {
+        Container = container,
+        Header = header,
+        Count = count,
+        Name = name,
+        HistoryFrame = historyFrame,
+        HistoryRows = {},
+        EmptyLabel = nil
+    }
+
+    return group.UI
+end
+
+State.UtilityLogger.EnsureGroup = State.UtilityLogger.EnsureGroup or function(kind, inst, name)
+    local key = State.UtilityLogger.GetGroupKey(kind, inst, name)
+    local group = State.UtilityLogger.Groups[key]
+    if not group then
+        group = {
+            Key = key,
+            Kind = kind,
+            DisplayName = State.UtilityLogger.GetGroupLabel(kind, inst, name),
+            History = {},
+            Count = 0,
+            Expanded = false,
+            UI = nil
+        }
+        State.UtilityLogger.Groups[key] = group
+        State.UtilityLogger.GroupList[#State.UtilityLogger.GroupList + 1] = key
+        State.UtilityLogger.GroupRows[key] = State.UtilityLogger.CreateGroupUI(group)
+    end
+    return group
+end
+
+State.UtilityLogger.AddLogEntry = State.UtilityLogger.AddLogEntry or function(kind, inst, name, value, textOverride)
+    local group = State.UtilityLogger.EnsureGroup(kind, inst, name)
+    if not group then
+        return
+    end
+    group.Count = (group.Count or 0) + 1
+    State.UtilityLogger.TotalLogs = (State.UtilityLogger.TotalLogs or 0) + 1
+    local entryText = textOverride
+    if entryText == nil then
+        entryText = (value ~= nil) and tostring(value) or "nil"
+    end
+    table.insert(group.History, {
+        Time = os.time(),
+        Value = value,
+        Text = entryText
+    })
+    if #group.History > State.UtilityLogger.MaxLogs then
+        table.remove(group.History, 1)
+    end
+    State.UtilityLogger.UpdateGroupCount(group)
+    if group.Expanded then
+        State.UtilityLogger.RebuildHistoryList(group)
+    end
+end
+
+State.UtilityLogger.AddLog = State.UtilityLogger.AddLog or function(text)
+    State.UtilityLogger.AddLogEntry("INFO", nil, "System", nil, text)
+end
+
+State.UtilityLogger.ClearLogs = State.UtilityLogger.ClearLogs or function()
+    for _, group in pairs(State.UtilityLogger.Groups) do
+        if group and group.UI and group.UI.Container then
+            group.UI.Container:Destroy()
+        end
+    end
+    State.UtilityLogger.Groups = {}
+    State.UtilityLogger.GroupList = {}
+    State.UtilityLogger.GroupRows = {}
+    State.UtilityLogger.TotalLogs = 0
 end
 
 State.UtilityLogger.AttachValue = State.UtilityLogger.AttachValue or function(inst)
@@ -5675,9 +5550,9 @@ State.UtilityLogger.AttachValue = State.UtilityLogger.AttachValue or function(in
         return
     end
     State.UtilityLogger.Watched[inst] = true
-    State.UtilityLogger.AddLog("[VALUE] " .. inst:GetFullName() .. " = " .. tostring(inst.Value))
+    State.UtilityLogger.AddLogEntry("VALUE", inst, nil, inst.Value)
     local conn = inst.Changed:Connect(function()
-        State.UtilityLogger.AddLog("[VALUE] " .. inst:GetFullName() .. " = " .. tostring(inst.Value))
+        State.UtilityLogger.AddLogEntry("VALUE", inst, nil, inst.Value)
     end)
     State.UtilityLogger.Conns[#State.UtilityLogger.Conns + 1] = conn
 end
@@ -5695,9 +5570,9 @@ State.UtilityLogger.AttachAttributes = State.UtilityLogger.AttachAttributes or f
             State.UtilityLogger.WatchedAttr[inst] = State.UtilityLogger.WatchedAttr[inst] or {}
             if not State.UtilityLogger.WatchedAttr[inst][name] then
                 State.UtilityLogger.WatchedAttr[inst][name] = true
-                State.UtilityLogger.AddLog("[ATTR] " .. inst:GetFullName() .. "." .. name .. " = " .. tostring(inst:GetAttribute(name)))
+                State.UtilityLogger.AddLogEntry("ATTR", inst, name, inst:GetAttribute(name))
                 local conn = inst:GetAttributeChangedSignal(name):Connect(function()
-                    State.UtilityLogger.AddLog("[ATTR] " .. inst:GetFullName() .. "." .. name .. " = " .. tostring(inst:GetAttribute(name)))
+                    State.UtilityLogger.AddLogEntry("ATTR", inst, name, inst:GetAttribute(name))
                 end)
                 State.UtilityLogger.Conns[#State.UtilityLogger.Conns + 1] = conn
             end
@@ -5799,7 +5674,7 @@ State.UtilityLogger.UI.Title.BackgroundTransparency = 1
 State.UtilityLogger.UI.Title.Font = Enum.Font.GothamSemibold
 State.UtilityLogger.UI.Title.TextSize = 12
 State.UtilityLogger.UI.Title.TextXAlignment = Enum.TextXAlignment.Left
-State.UtilityLogger.UI.Title.Text = "Logs (Value/Attribute)"
+State.UtilityLogger.UI.Title.Text = "Logs (Value/Attribute) - klik grup untuk history"
 State.UtilityLogger.UI.Title.Parent = State.UtilityLogger.UI.Container
 registerTheme(State.UtilityLogger.UI.Title, "TextColor3", "Text")
 
@@ -5832,11 +5707,8 @@ State.UtilityLogger.UI.Pad.PaddingRight = UDim.new(0, 6)
 State.UtilityLogger.UI.Pad.Parent = State.UtilityLogger.UI.Scroll
 
 createButton(State.DevSections.Utility, "Clear Logs", function()
-    for i = #State.UtilityLogger.Logs, 1, -1 do
-        if State.UtilityLogger.Logs[i].Frame then
-            State.UtilityLogger.Logs[i].Frame:Destroy()
-        end
-        table.remove(State.UtilityLogger.Logs, i)
+    if State.UtilityLogger.ClearLogs then
+        State.UtilityLogger.ClearLogs()
     end
 end)
 
@@ -5844,13 +5716,1218 @@ State.UtilityLogger.Names = State.UtilityLogger.ParseNames(Config.UtilityTrackNa
 if State.UtilityLogger.Enabled then
     State.UtilityLogger.Start()
 end
-local function hookRemote(obj)
-    if not addLogEntry then
-        return
+
+State.TurtleSpy = State.TurtleSpy or {}
+State.TurtleSpy.Init = State.TurtleSpy.Init or function(parent)
+    local TS = State.TurtleSpy
+    TS.Data = TS.Data or {}
+    TS.UI = TS.UI or {}
+
+    local data = TS.Data
+    local ui = TS.UI
+
+    data.Groups = data.Groups or {}
+    data.GroupList = data.GroupList or {}
+    data.GroupRows = data.GroupRows or {}
+    data.IgnoreList = data.IgnoreList or {}
+    data.BlockList = data.BlockList or {}
+    data.Unstacked = data.Unstacked or {}
+    data.SelectedGroupKey = data.SelectedGroupKey or nil
+    data.SelectedHistoryIndex = data.SelectedHistoryIndex or nil
+
+    TS.Enabled = TS.Enabled == true
+
+    local function getThemeText()
+        return (Themes[Config.Theme] or Themes.Default).Text
     end
+
+    local function toUnicode(str)
+        local codepoints = "utf8.char("
+        for _, v in utf8.codes(str) do
+            codepoints = codepoints .. v .. ", "
+        end
+        return codepoints:sub(1, -3) .. ")"
+    end
+
+    local function getFullPathOfInstance(instance)
+        if not instance then
+            return "nil"
+        end
+        local name = instance.Name
+        local head = (#name > 0 and "." .. name) or "['']"
+
+        if not instance.Parent and instance ~= game then
+            return head .. " --[[ PARENTED TO NIL OR DESTROYED ]]"
+        end
+
+        if instance == game then
+            return "game"
+        elseif instance == workspace then
+            return "workspace"
+        else
+            local ok, result = pcall(game.GetService, game, instance.ClassName)
+            if ok and result then
+                head = ':GetService("' .. instance.ClassName .. '")'
+            elseif instance == LP then
+                head = ".LocalPlayer"
+            else
+                local nonAlphaNum = name:gsub("[%w_]", "")
+                local noPunct = nonAlphaNum:gsub("[%s%p]", "")
+                if tonumber(name:sub(1, 1)) or (#nonAlphaNum ~= 0 and #noPunct == 0) then
+                    head = '["' .. name:gsub('"', '\\"'):gsub("\\", "\\\\") .. '"]'
+                elseif #nonAlphaNum ~= 0 and #noPunct > 0 then
+                    head = "[" .. toUnicode(name) .. "]"
+                end
+            end
+        end
+
+        return getFullPathOfInstance(instance.Parent) .. head
+    end
+
+    TS.GetFullPath = TS.GetFullPath or getFullPathOfInstance
+
+    local function buildArgsKey(args)
+        local ok, res = pcall(function()
+            return convertTableToString(args)
+        end)
+        if ok and type(res) == "string" and #res > 0 then
+            return res
+        end
+        return tostring(args)
+    end
+
+    local function getGroupKey(remote, args, direction)
+        local base
+        if data.Unstacked[remote] then
+            base = tostring(remote) .. "::" .. buildArgsKey(args)
+        else
+            base = tostring(remote)
+        end
+        local dir = direction or "C2S"
+        return dir .. "::" .. base
+    end
+
+    local function getCallingScript()
+        if type(getcallingscript) == "function" then
+            local ok, res = pcall(getcallingscript)
+            if ok and res then
+                return res
+            end
+        end
+        if type(getfenv) == "function" then
+            local ok, env = pcall(getfenv, 0)
+            if ok and type(env) == "table" then
+                return rawget(env, "script")
+            end
+        end
+        return nil
+    end
+
+    local function convertTableToString(args)
+        local str = ""
+        local index = 1
+        local count = 0
+        for _ in pairs(args) do
+            count = count + 1
+        end
+        for i, v in pairs(args) do
+            if type(i) == "string" then
+                str = str .. '["' .. tostring(i) .. '"] = '
+            elseif type(i) == "userdata" and typeof(i) ~= "Instance" then
+                str = str .. "[" .. typeof(i) .. ".new(" .. tostring(i) .. ")] = "
+            elseif type(i) == "userdata" then
+                str = str .. "[" .. getFullPathOfInstance(i) .. "] = "
+            end
+            if v == nil then
+                str = str .. "nil"
+            elseif typeof(v) == "Instance" then
+                str = str .. getFullPathOfInstance(v)
+            elseif typeof(v) == "Vector3" then
+                str = str .. ("Vector3.new(%s, %s, %s)"):format(tostring(v.X), tostring(v.Y), tostring(v.Z))
+            elseif typeof(v) == "CFrame" then
+                str = str .. "CFrame.new(" .. tostring(v) .. ")"
+            elseif type(v) == "number" or type(v) == "function" then
+                str = str .. tostring(v)
+            elseif type(v) == "userdata" then
+                str = str .. typeof(v) .. ".new(" .. tostring(v) .. ")"
+            elseif type(v) == "string" then
+                str = str .. [["]] .. v .. [["]]
+            elseif type(v) == "table" then
+                str = str .. "{"
+                str = str .. convertTableToString(v)
+                str = str .. "}"
+            elseif type(v) == "boolean" then
+                str = str .. (v and "true" or "false")
+            else
+                str = str .. tostring(v)
+            end
+            if count > 1 and index < count then
+                str = str .. ","
+            end
+            index = index + 1
+        end
+        return str
+    end
+
+    local function setRowColor(row, state)
+        if not row or not row.Name then
+            return
+        end
+        if state == "block" then
+            row.Name.TextColor3 = Color3.fromRGB(225, 177, 44)
+        elseif state == "ignore" then
+            row.Name.TextColor3 = Color3.fromRGB(127, 143, 166)
+        else
+            row.Name.TextColor3 = getThemeText()
+        end
+    end
+
+    local function makeButtonRow(parentRow)
+        local row = Instance.new("Frame")
+        row.Size = UDim2.new(1, 0, 0, 30)
+        row.BorderSizePixel = 0
+        row.BackgroundTransparency = 1
+        row.Parent = parentRow
+
+        local layout = Instance.new("UIListLayout")
+        layout.FillDirection = Enum.FillDirection.Horizontal
+        layout.SortOrder = Enum.SortOrder.LayoutOrder
+        layout.Padding = UDim.new(0, 6)
+        layout.Parent = row
+
+        return row
+    end
+
+    local function makeRowButton(row, label, onClick)
+        local btn = Instance.new("TextButton")
+        btn.Size = UDim2.new(0.5, -3, 1, 0)
+        btn.BorderSizePixel = 0
+        btn.Font = Enum.Font.Gotham
+        btn.TextSize = 11
+        btn.Text = label
+        btn.AutoButtonColor = false
+        btn.Parent = row
+        registerTheme(btn, "BackgroundColor3", "Main")
+        registerTheme(btn, "TextColor3", "Text")
+        addCorner(btn, 6)
+
+        local pad = Instance.new("UIPadding")
+        pad.PaddingLeft = UDim.new(0, 4)
+        pad.PaddingRight = UDim.new(0, 4)
+        pad.PaddingTop = UDim.new(0, 2)
+        pad.PaddingBottom = UDim.new(0, 2)
+        pad.Parent = btn
+
+        local disabled = false
+
+        btn.MouseButton1Click:Connect(function()
+            if disabled then
+                return
+            end
+            if onClick then
+                onClick()
+            end
+        end)
+
+        return {
+            Button = btn,
+            SetEnabled = function(_, enabled)
+                disabled = not enabled
+                btn.TextTransparency = disabled and 0.4 or 0
+            end
+        }
+    end
+
+    createParagraph(
+        parent,
+        "TurtleSpy (Remotes)",
+        "Adopsi fitur TurtleSpy: daftar remote yang terpanggil, detail args, block/ignore, run/copy, dan Remote Browser."
+    )
+
+    createToggle(parent, "Enable Turtle Spy Capture", nil, TS.Enabled, function(v)
+        TS.Enabled = v == true
+    end)
+
+    ui.ToggleS2C = createToggle(parent, "Data Server to Client", nil, false, function(v)
+        if setRemoteHooking then
+            setRemoteHooking(v == true)
+        end
+    end)
+
+    ui.ToggleC2S = createToggle(parent, "Data Client to Server", nil, false, function(v)
+        State.RemoteC2SEnabled = v == true
+        if State.RemoteC2SEnabled then
+            local ok = State.RemoteHooks and State.RemoteHooks.EnsureNamecall and State.RemoteHooks.EnsureNamecall()
+            if not ok then
+                State.RemoteC2SEnabled = false
+                if ui.ToggleC2S and ui.ToggleC2S.Set then
+                    ui.ToggleC2S:Set(false)
+                end
+                notify("C2S", "Namecall hook tidak tersedia.", 3)
+            end
+        end
+    end)
+
+    local function clearBrowserList()
+        if ui.BrowserItems then
+            for i = #ui.BrowserItems, 1, -1 do
+                if ui.BrowserItems[i] and ui.BrowserItems[i].Frame then
+                    ui.BrowserItems[i].Frame:Destroy()
+                end
+                table.remove(ui.BrowserItems, i)
+            end
+        end
+        ui.BrowserItems = {}
+    end
+
+    local function refreshBrowserList()
+        clearBrowserList()
+        local descendants = game:GetDescendants()
+        for i = 1, #descendants do
+            local inst = descendants[i]
+            if inst:IsA("RemoteEvent") or inst:IsA("RemoteFunction") or inst.ClassName == "UnreliableRemoteEvent" then
+                local row = Instance.new("TextButton")
+                row.Size = UDim2.new(1, 0, 0, 26)
+                row.BorderSizePixel = 0
+                row.AutoButtonColor = false
+                row.Parent = ui.BrowserScroll
+                registerTheme(row, "BackgroundColor3", "Main")
+                addCorner(row, 6)
+
+                local name = Instance.new("TextLabel")
+                name.Size = UDim2.new(1, -50, 1, 0)
+                name.Position = UDim2.new(0, 8, 0, 0)
+                name.BackgroundTransparency = 1
+                name.Font = Enum.Font.Gotham
+                name.TextSize = 12
+                name.TextXAlignment = Enum.TextXAlignment.Left
+                name.Text = inst.Name
+                name.Parent = row
+                registerTheme(name, "TextColor3", "Text")
+
+                local kind = Instance.new("TextLabel")
+                kind.Size = UDim2.new(0, 42, 1, 0)
+                kind.Position = UDim2.new(1, -46, 0, 0)
+                kind.BackgroundTransparency = 1
+                kind.Font = Enum.Font.GothamSemibold
+                kind.TextSize = 10
+                kind.TextXAlignment = Enum.TextXAlignment.Right
+                kind.Text = inst:IsA("RemoteFunction") and "RF" or "RE"
+                kind.Parent = row
+                registerTheme(kind, "TextColor3", "Muted")
+
+                row.MouseButton1Click:Connect(function()
+                    local method = inst:IsA("RemoteFunction") and ":InvokeServer()" or ":FireServer()"
+                    local path = getFullPathOfInstance(inst) .. method
+                    if setclipboard then
+                        setclipboard(path)
+                        notify("Remote Browser", "Path disalin", 2)
+                    else
+                        notify("Copy Failed", "setclipboard tidak tersedia", 2)
+                    end
+                end)
+
+                ui.BrowserItems[#ui.BrowserItems + 1] = {Frame = row}
+            end
+        end
+    end
+
+    local function copyAllRemotesGrouped()
+        local events = {}
+        local funcs = {}
+        local descendants = game:GetDescendants()
+        for i = 1, #descendants do
+            local inst = descendants[i]
+            if inst:IsA("RemoteFunction") then
+                funcs[#funcs + 1] = inst
+            elseif inst:IsA("RemoteEvent") or inst.ClassName == "UnreliableRemoteEvent" then
+                events[#events + 1] = inst
+            end
+        end
+
+        local lines = {}
+        lines[#lines + 1] = "RemoteEvent:"
+        if #events == 0 then
+            lines[#lines + 1] = "(kosong)"
+        else
+            table.sort(events, function(a, b)
+                return tostring(a:GetFullName()) < tostring(b:GetFullName())
+            end)
+            for _, inst in ipairs(events) do
+                lines[#lines + 1] = getFullPathOfInstance(inst) .. ":FireServer()"
+            end
+        end
+        lines[#lines + 1] = ""
+        lines[#lines + 1] = "RemoteFunction:"
+        if #funcs == 0 then
+            lines[#lines + 1] = "(kosong)"
+        else
+            table.sort(funcs, function(a, b)
+                return tostring(a:GetFullName()) < tostring(b:GetFullName())
+            end)
+            for _, inst in ipairs(funcs) do
+                lines[#lines + 1] = getFullPathOfInstance(inst) .. ":InvokeServer()"
+            end
+        end
+
+        if setclipboard then
+            setclipboard(table.concat(lines, "\n"))
+            notify("Remote Browser", "Copy All grouped berhasil", 2)
+        else
+            notify("Copy Failed", "setclipboard tidak tersedia", 2)
+        end
+    end
+
+    local listContainer = createContainer(parent, 220)
+    ui.ListContainer = listContainer
+    ui.ListTitle = Instance.new("TextLabel")
+    ui.ListTitle.Size = UDim2.new(1, 0, 0, 18)
+    ui.ListTitle.BackgroundTransparency = 1
+    ui.ListTitle.Font = Enum.Font.GothamSemibold
+    ui.ListTitle.TextSize = 12
+    ui.ListTitle.TextXAlignment = Enum.TextXAlignment.Left
+    ui.ListTitle.Text = "Captured Remotes (klik grup untuk history)"
+    ui.ListTitle.Parent = listContainer
+    registerTheme(ui.ListTitle, "TextColor3", "Text")
+
+    ui.ListScroll = Instance.new("ScrollingFrame")
+    ui.ListScroll.Size = UDim2.new(1, 0, 1, -22)
+    ui.ListScroll.Position = UDim2.new(0, 0, 0, 20)
+    ui.ListScroll.BorderSizePixel = 0
+    ui.ListScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+    ui.ListScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    ui.ListScroll.ScrollBarThickness = 6
+    ui.ListScroll.ScrollingDirection = Enum.ScrollingDirection.Y
+    ui.ListScroll.ClipsDescendants = true
+    ui.ListScroll.Parent = listContainer
+    registerTheme(ui.ListScroll, "BackgroundColor3", "Panel")
+
+    ui.ListLayout = Instance.new("UIListLayout")
+    ui.ListLayout.Padding = UDim.new(0, 6)
+    ui.ListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    ui.ListLayout.Parent = ui.ListScroll
+
+    trackConnection(ui.ListLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+        ui.ListScroll.CanvasSize = UDim2.new(0, 0, 0, ui.ListLayout.AbsoluteContentSize.Y + 12)
+    end))
+
+    ui.ListPad = Instance.new("UIPadding")
+    ui.ListPad.PaddingTop = UDim.new(0, 6)
+    ui.ListPad.PaddingBottom = UDim.new(0, 6)
+    ui.ListPad.PaddingLeft = UDim.new(0, 6)
+    ui.ListPad.PaddingRight = UDim.new(0, 6)
+    ui.ListPad.Parent = ui.ListScroll
+
+    local function createListSection(labelText)
+        local label = Instance.new("TextLabel")
+        label.Size = UDim2.new(1, 0, 0, 18)
+        label.BackgroundTransparency = 1
+        label.Font = Enum.Font.GothamSemibold
+        label.TextSize = 11
+        label.TextXAlignment = Enum.TextXAlignment.Left
+        label.Text = labelText
+        label.Parent = ui.ListScroll
+        registerTheme(label, "TextColor3", "Muted")
+
+        local container = Instance.new("Frame")
+        container.Size = UDim2.new(1, 0, 0, 0)
+        container.AutomaticSize = Enum.AutomaticSize.Y
+        container.BorderSizePixel = 0
+        container.BackgroundTransparency = 1
+        container.Parent = ui.ListScroll
+
+        local layout = Instance.new("UIListLayout")
+        layout.SortOrder = Enum.SortOrder.LayoutOrder
+        layout.Padding = UDim.new(0, 6)
+        layout.Parent = container
+
+        return {
+            Label = label,
+            Container = container
+        }
+    end
+
+    ui.ListSectionS2C = createListSection("S2C (Server to Client)")
+
+    local listDivider = Instance.new("Frame")
+    listDivider.Size = UDim2.new(1, 0, 0, 1)
+    listDivider.BorderSizePixel = 0
+    listDivider.Parent = ui.ListScroll
+    registerTheme(listDivider, "BackgroundColor3", "Muted")
+    ui.ListSectionDivider = listDivider
+
+    ui.ListSectionC2S = createListSection("C2S (Client to Server)")
+
+    local detailContainer = createContainer(parent, 320)
+    ui.DetailContainer = detailContainer
+    ui.DetailTitle = Instance.new("TextLabel")
+    ui.DetailTitle.Size = UDim2.new(1, 0, 0, 18)
+    ui.DetailTitle.BackgroundTransparency = 1
+    ui.DetailTitle.Font = Enum.Font.GothamSemibold
+    ui.DetailTitle.TextSize = 12
+    ui.DetailTitle.TextXAlignment = Enum.TextXAlignment.Left
+    ui.DetailTitle.Text = "Detail Remote"
+    ui.DetailTitle.Parent = detailContainer
+    registerTheme(ui.DetailTitle, "TextColor3", "Text")
+
+    ui.CodeScroll = Instance.new("ScrollingFrame")
+    ui.CodeScroll.Size = UDim2.new(1, 0, 0, 60)
+    ui.CodeScroll.Position = UDim2.new(0, 0, 0, 22)
+    ui.CodeScroll.BorderSizePixel = 0
+    ui.CodeScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+    ui.CodeScroll.AutomaticCanvasSize = Enum.AutomaticSize.X
+    ui.CodeScroll.ScrollBarThickness = 6
+    ui.CodeScroll.ScrollingDirection = Enum.ScrollingDirection.X
+    ui.CodeScroll.ClipsDescendants = true
+    ui.CodeScroll.Parent = detailContainer
+    registerTheme(ui.CodeScroll, "BackgroundColor3", "Panel")
+
+    ui.CodeLabel = Instance.new("TextLabel")
+    ui.CodeLabel.Size = UDim2.new(0, 0, 1, 0)
+    ui.CodeLabel.AutomaticSize = Enum.AutomaticSize.X
+    ui.CodeLabel.BackgroundTransparency = 1
+    local okFont, codeFont = pcall(function()
+        return Enum.Font.Code
+    end)
+    ui.CodeLabel.Font = okFont and codeFont or Enum.Font.Gotham
+    ui.CodeLabel.TextSize = 12
+    ui.CodeLabel.TextXAlignment = Enum.TextXAlignment.Left
+    ui.CodeLabel.TextYAlignment = Enum.TextYAlignment.Top
+    ui.CodeLabel.Text = "Pilih remote untuk melihat detail."
+    ui.CodeLabel.Parent = ui.CodeScroll
+    registerTheme(ui.CodeLabel, "TextColor3", "Text")
+
+    local detailButtons = Instance.new("Frame")
+    detailButtons.Size = UDim2.new(1, 0, 0, 210)
+    detailButtons.Position = UDim2.new(0, 0, 0, 90)
+    detailButtons.BorderSizePixel = 0
+    detailButtons.BackgroundTransparency = 1
+    detailButtons.Parent = detailContainer
+
+    local detailLayout = Instance.new("UIListLayout")
+    detailLayout.Padding = UDim.new(0, 6)
+    detailLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    detailLayout.Parent = detailButtons
+
+    local row1 = makeButtonRow(detailButtons)
+    local btnCopyCode = makeRowButton(row1, "Copy Code", function() end)
+    local btnRunCode = makeRowButton(row1, "Run Code", function() end)
+
+    local row2 = makeButtonRow(detailButtons)
+    local btnCopyScript = makeRowButton(row2, "Copy Script Path", function() end)
+    local btnCopyDecompile = makeRowButton(row2, "Copy Decompiled", function() end)
+
+    local row3 = makeButtonRow(detailButtons)
+    local btnIgnore = makeRowButton(row3, "Ignore Remote", function() end)
+    local btnBlock = makeRowButton(row3, "Block Remote", function() end)
+
+    local row4 = makeButtonRow(detailButtons)
+    local btnWhile = makeRowButton(row4, "While Loop", function() end)
+    local btnCopyReturn = makeRowButton(row4, "Copy Return", function() end)
+
+    local row5 = makeButtonRow(detailButtons)
+    local btnUnstack = makeRowButton(row5, "Unstack Remote", function() end)
+    local btnClearHistory = makeRowButton(row5, "Clear History", function() end)
+
+    local row6 = makeButtonRow(detailButtons)
+    local btnClearAll = makeRowButton(row6, "Clear All Captured", function() end)
+
+    local browserContainer = createContainer(parent, 180)
+    ui.BrowserContainer = browserContainer
+    ui.BrowserTitle = Instance.new("TextLabel")
+    ui.BrowserTitle.Size = UDim2.new(1, 0, 0, 18)
+    ui.BrowserTitle.BackgroundTransparency = 1
+    ui.BrowserTitle.Font = Enum.Font.GothamSemibold
+    ui.BrowserTitle.TextSize = 12
+    ui.BrowserTitle.TextXAlignment = Enum.TextXAlignment.Left
+    ui.BrowserTitle.Text = "Remote Browser (klik untuk copy path)"
+    ui.BrowserTitle.Parent = browserContainer
+    registerTheme(ui.BrowserTitle, "TextColor3", "Text")
+
+    ui.BrowserScroll = Instance.new("ScrollingFrame")
+    ui.BrowserScroll.Size = UDim2.new(1, 0, 1, -22)
+    ui.BrowserScroll.Position = UDim2.new(0, 0, 0, 20)
+    ui.BrowserScroll.BorderSizePixel = 0
+    ui.BrowserScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+    ui.BrowserScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    ui.BrowserScroll.ScrollBarThickness = 6
+    ui.BrowserScroll.ScrollingDirection = Enum.ScrollingDirection.Y
+    ui.BrowserScroll.ClipsDescendants = true
+    ui.BrowserScroll.Parent = browserContainer
+    registerTheme(ui.BrowserScroll, "BackgroundColor3", "Panel")
+
+    ui.BrowserList = Instance.new("UIListLayout")
+    ui.BrowserList.Padding = UDim.new(0, 6)
+    ui.BrowserList.SortOrder = Enum.SortOrder.LayoutOrder
+    ui.BrowserList.Parent = ui.BrowserScroll
+
+    trackConnection(ui.BrowserList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+        ui.BrowserScroll.CanvasSize = UDim2.new(0, 0, 0, ui.BrowserList.AbsoluteContentSize.Y + 12)
+    end))
+
+    ui.BrowserPad = Instance.new("UIPadding")
+    ui.BrowserPad.PaddingTop = UDim.new(0, 6)
+    ui.BrowserPad.PaddingBottom = UDim.new(0, 6)
+    ui.BrowserPad.PaddingLeft = UDim.new(0, 6)
+    ui.BrowserPad.PaddingRight = UDim.new(0, 6)
+    ui.BrowserPad.Parent = ui.BrowserScroll
+
+    createButton(parent, "Refresh Remote Browser", function()
+        refreshBrowserList()
+    end)
+
+    createButton(parent, "Copy All (Grouped)", function()
+        copyAllRemotesGrouped()
+    end)
+
+    local function clearAllCaptured()
+        for i = #data.GroupList, 1, -1 do
+            local key = data.GroupList[i]
+            local group = data.Groups[key]
+            if group and group.UI and group.UI.Container then
+                group.UI.Container:Destroy()
+            end
+            table.remove(data.GroupList, i)
+        end
+        data.Groups = {}
+        data.GroupRows = {}
+        ui.CodeLabel.Text = "Pilih remote untuk melihat detail."
+        ui.DetailTitle.Text = "Detail Remote"
+        data.SelectedGroupKey = nil
+        data.SelectedHistoryIndex = nil
+        updateDetailButtons(nil)
+    end
+
+    btnClearAll.Button.MouseButton1Click:Connect(function()
+        clearAllCaptured()
+    end)
+
+    local function updateDetailButtons(remote, entry)
+        local isFunc = remote and remote:IsA("RemoteFunction")
+        local method = entry and entry.Method
+        local isClientSignal = method == "OnClientEvent" or method == "OnClientInvoke"
+        btnCopyReturn:SetEnabled(isFunc and not isClientSignal)
+        btnRunCode:SetEnabled(remote ~= nil and not isClientSignal)
+        btnCopyCode:SetEnabled(remote ~= nil)
+        btnCopyScript:SetEnabled(remote ~= nil)
+        btnCopyDecompile:SetEnabled(remote ~= nil)
+        btnIgnore:SetEnabled(remote ~= nil)
+        btnBlock:SetEnabled(remote ~= nil)
+        btnWhile:SetEnabled(remote ~= nil and not isClientSignal)
+        btnUnstack:SetEnabled(remote ~= nil)
+        btnClearHistory:SetEnabled(remote ~= nil)
+    end
+
+    local function setDetail(groupKey, historyIndex)
+        local group = data.Groups[groupKey]
+        if not group then
+            return
+        end
+        local entry = group.History and group.History[historyIndex]
+        if not entry then
+            return
+        end
+        local remote = group.Remote
+        if not remote then
+            return
+        end
+        data.SelectedGroupKey = groupKey
+        data.SelectedHistoryIndex = historyIndex
+        local methodLabel = entry.Method or (remote:IsA("RemoteFunction") and "InvokeServer" or "FireServer")
+        local codeText
+        if methodLabel == "OnClientEvent" then
+            codeText = getFullPathOfInstance(remote) .. ".OnClientEvent (args = {" .. convertTableToString(entry.Args or {}) .. "})"
+        elseif methodLabel == "OnClientInvoke" then
+            codeText = getFullPathOfInstance(remote) .. ".OnClientInvoke (args = {" .. convertTableToString(entry.Args or {}) .. "})"
+        else
+            codeText = getFullPathOfInstance(remote) .. ":" .. methodLabel .. "(" .. convertTableToString(entry.Args or {}) .. ")"
+        end
+        ui.DetailTitle.Text = "Detail: " .. tostring(remote.Name)
+        ui.CodeLabel.Text = codeText
+        ui.CodeScroll.CanvasSize = UDim2.new(0, ui.CodeLabel.TextBounds.X + 12, 0, 0)
+
+        if data.BlockList[remote] then
+            btnBlock.Button.Text = "Unblock Remote"
+            btnBlock.Button.TextColor3 = Color3.fromRGB(251, 197, 49)
+        else
+            btnBlock.Button.Text = "Block Remote"
+            btnBlock.Button.TextColor3 = (Themes[Config.Theme] or Themes.Default).Text
+        end
+
+        if data.IgnoreList[remote] then
+            btnIgnore.Button.Text = "Stop Ignore"
+            btnIgnore.Button.TextColor3 = Color3.fromRGB(127, 143, 166)
+        else
+            btnIgnore.Button.Text = "Ignore Remote"
+            btnIgnore.Button.TextColor3 = (Themes[Config.Theme] or Themes.Default).Text
+        end
+
+        if data.Unstacked[remote] then
+            btnUnstack.Button.Text = "Stack Remote"
+            btnUnstack.Button.TextColor3 = Color3.fromRGB(251, 197, 49)
+        else
+            btnUnstack.Button.Text = "Unstack Remote"
+            btnUnstack.Button.TextColor3 = (Themes[Config.Theme] or Themes.Default).Text
+        end
+
+        updateDetailButtons(remote, entry)
+    end
+
+    local function getSelectedEntry()
+        local key = data.SelectedGroupKey
+        local idx = data.SelectedHistoryIndex
+        if not key or not idx then
+            return nil, nil
+        end
+        local group = data.Groups[key]
+        if not group then
+            return nil, nil
+        end
+        local entry = group.History and group.History[idx]
+        if not entry then
+            return nil, nil
+        end
+        return group, entry
+    end
+
+    btnCopyCode.Button.MouseButton1Click:Connect(function()
+        local group, entry = getSelectedEntry()
+        if not group or not entry then
+            return
+        end
+        if setclipboard then
+            setclipboard(ui.CodeLabel.Text)
+            notify("Copied", "Code disalin", 2)
+        else
+            notify("Copy Failed", "setclipboard tidak tersedia", 2)
+        end
+    end)
+
+    btnRunCode.Button.MouseButton1Click:Connect(function()
+        local group, entry = getSelectedEntry()
+        if not group or not entry then
+            return
+        end
+        local remote = group.Remote
+        if not remote then
+            return
+        end
+        local args = entry.Args or {}
+        if remote:IsA("RemoteFunction") then
+            pcall(function()
+                remote:InvokeServer(unpack(args))
+            end)
+        else
+            pcall(function()
+                remote:FireServer(unpack(args))
+            end)
+        end
+    end)
+
+    btnCopyScript.Button.MouseButton1Click:Connect(function()
+        local group, entry = getSelectedEntry()
+        if not group or not entry then
+            return
+        end
+        local scriptRef = entry.Script
+        if not scriptRef then
+            notify("Script", "Script tidak tersedia", 2)
+            return
+        end
+        if setclipboard then
+            setclipboard(getFullPathOfInstance(scriptRef))
+            notify("Copied", "Script path disalin", 2)
+        else
+            notify("Copy Failed", "setclipboard tidak tersedia", 2)
+        end
+    end)
+
+    btnCopyDecompile.Button.MouseButton1Click:Connect(function()
+        local group, entry = getSelectedEntry()
+        if not group or not entry then
+            return
+        end
+        local scriptRef = entry.Script
+        if not scriptRef then
+            notify("Decompile", "Script tidak tersedia", 2)
+            return
+        end
+        if type(decompile) ~= "function" then
+            notify("Decompile", "Fitur decompile tidak tersedia", 2)
+            return
+        end
+        local ok, res = pcall(function()
+            return decompile(scriptRef)
+        end)
+        if ok and res then
+            if setclipboard then
+                setclipboard(res)
+                notify("Copied", "Decompile disalin", 2)
+            else
+                notify("Copy Failed", "setclipboard tidak tersedia", 2)
+            end
+        else
+            notify("Decompile", "Gagal decompile", 2)
+        end
+    end)
+
+    btnIgnore.Button.MouseButton1Click:Connect(function()
+        local group = getSelectedEntry()
+        if not group then
+            return
+        end
+        local remote = group.Remote
+        if not remote then
+            return
+        end
+        if data.IgnoreList[remote] then
+            data.IgnoreList[remote] = nil
+        else
+            data.IgnoreList[remote] = true
+        end
+        for _, g in pairs(data.Groups) do
+            if g.Remote == remote and g.UI and g.UI.Header then
+                if data.IgnoreList[remote] then
+                    setRowColor(g.UI.Header, "ignore")
+                elseif data.BlockList[remote] then
+                    setRowColor(g.UI.Header, "block")
+                else
+                    setRowColor(g.UI.Header, "normal")
+                end
+            end
+        end
+        if data.SelectedGroupKey and data.SelectedHistoryIndex then
+            setDetail(data.SelectedGroupKey, data.SelectedHistoryIndex)
+        end
+    end)
+
+    btnBlock.Button.MouseButton1Click:Connect(function()
+        local group = getSelectedEntry()
+        if not group then
+            return
+        end
+        local remote = group.Remote
+        if not remote then
+            return
+        end
+        if data.BlockList[remote] then
+            data.BlockList[remote] = nil
+        else
+            data.BlockList[remote] = true
+        end
+        for _, g in pairs(data.Groups) do
+            if g.Remote == remote and g.UI and g.UI.Header then
+                if data.BlockList[remote] then
+                    setRowColor(g.UI.Header, "block")
+                elseif data.IgnoreList[remote] then
+                    setRowColor(g.UI.Header, "ignore")
+                else
+                    setRowColor(g.UI.Header, "normal")
+                end
+            end
+        end
+        if data.SelectedGroupKey and data.SelectedHistoryIndex then
+            setDetail(data.SelectedGroupKey, data.SelectedHistoryIndex)
+        end
+    end)
+
+    btnWhile.Button.MouseButton1Click:Connect(function()
+        local group, entry = getSelectedEntry()
+        if not group or not entry then
+            return
+        end
+        if setclipboard then
+            setclipboard("while task.wait() do\n    " .. ui.CodeLabel.Text .. "\nend")
+            notify("Copied", "While loop disalin", 2)
+        else
+            notify("Copy Failed", "setclipboard tidak tersedia", 2)
+        end
+    end)
+
+    btnCopyReturn.Button.MouseButton1Click:Connect(function()
+        local group, entry = getSelectedEntry()
+        if not group or not entry then
+            return
+        end
+        local remote = group.Remote
+        local args = entry.Args or {}
+        if not (remote and remote:IsA("RemoteFunction")) then
+            return
+        end
+        local ok, res = pcall(function()
+            return remote:InvokeServer(unpack(args))
+        end)
+        if ok then
+            if setclipboard then
+                setclipboard(convertTableToString(table.pack(res)))
+                notify("Copied", "Return value disalin", 2)
+            else
+                notify("Copy Failed", "setclipboard tidak tersedia", 2)
+            end
+        else
+            notify("Invoke Failed", "Gagal InvokeServer", 2)
+        end
+    end)
+
+    btnUnstack.Button.MouseButton1Click:Connect(function()
+        local group = getSelectedEntry()
+        if not group then
+            return
+        end
+        local remote = group.Remote
+        if not remote then
+            return
+        end
+        if data.Unstacked[remote] then
+            data.Unstacked[remote] = nil
+        else
+            data.Unstacked[remote] = true
+        end
+        if data.SelectedGroupKey and data.SelectedHistoryIndex then
+            setDetail(data.SelectedGroupKey, data.SelectedHistoryIndex)
+        end
+    end)
+
+    local function updateGroupCount(group)
+        if group and group.UI and group.UI.Count then
+            group.UI.Count.Text = tostring(group.Count or 0)
+        end
+    end
+
+    local function ensureHistoryEmptyLabel(group)
+        if not group or not group.UI or not group.UI.HistoryFrame then
+            return
+        end
+        if group.UI.EmptyLabel then
+            group.UI.EmptyLabel:Destroy()
+            group.UI.EmptyLabel = nil
+        end
+        if not group.History or #group.History == 0 then
+            local empty = Instance.new("TextLabel")
+            empty.Size = UDim2.new(1, 0, 0, 18)
+            empty.BackgroundTransparency = 1
+            empty.Font = Enum.Font.Gotham
+            empty.TextSize = 11
+            empty.TextXAlignment = Enum.TextXAlignment.Left
+            empty.Text = "Tidak ada history"
+            empty.Parent = group.UI.HistoryFrame
+            registerTheme(empty, "TextColor3", "Muted")
+            group.UI.EmptyLabel = empty
+        end
+    end
+
+    local function addHistoryRow(group, index, entry)
+        if not group or not group.UI or not group.UI.HistoryFrame then
+            return
+        end
+        local row = Instance.new("TextButton")
+        row.Size = UDim2.new(1, 0, 0, 22)
+        row.BorderSizePixel = 0
+        row.AutoButtonColor = false
+        row.Parent = group.UI.HistoryFrame
+        registerTheme(row, "BackgroundColor3", "Main")
+        addCorner(row, 6)
+
+        local label = Instance.new("TextLabel")
+        label.Size = UDim2.new(1, -8, 1, 0)
+        label.Position = UDim2.new(0, 8, 0, 0)
+        label.BackgroundTransparency = 1
+        label.Font = Enum.Font.Gotham
+        label.TextSize = 11
+        label.TextXAlignment = Enum.TextXAlignment.Left
+        local method = entry.Method or (group.IsEvent and "FireServer" or "InvokeServer")
+        local timeText = entry.Time and os.date("%H:%M:%S", entry.Time) or "--:--:--"
+        local dir = entry.Direction and (" (" .. tostring(entry.Direction) .. ")") or ""
+        label.Text = "#" .. tostring(index) .. " " .. method .. dir .. " | " .. timeText
+        label.Parent = row
+        registerTheme(label, "TextColor3", "Text")
+
+        row.MouseButton1Click:Connect(function()
+            setDetail(group.Key, index)
+        end)
+
+        group.UI.HistoryRows[#group.UI.HistoryRows + 1] = row
+    end
+
+    local function rebuildHistoryList(group)
+        if not group or not group.UI or not group.UI.HistoryFrame then
+            return
+        end
+        if group.UI.HistoryRows then
+            for i = #group.UI.HistoryRows, 1, -1 do
+                if group.UI.HistoryRows[i] then
+                    group.UI.HistoryRows[i]:Destroy()
+                end
+                table.remove(group.UI.HistoryRows, i)
+            end
+        end
+        group.UI.HistoryRows = {}
+        ensureHistoryEmptyLabel(group)
+        if group.History then
+            for i, entry in ipairs(group.History) do
+                addHistoryRow(group, i, entry)
+            end
+        end
+    end
+
+    local function createGroupUI(group)
+        local listParent = ui.ListScroll
+        if group and group.Direction == "S2C" and ui.ListSectionS2C and ui.ListSectionS2C.Container then
+            listParent = ui.ListSectionS2C.Container
+        elseif group and group.Direction == "C2S" and ui.ListSectionC2S and ui.ListSectionC2S.Container then
+            listParent = ui.ListSectionC2S.Container
+        end
+
+        local container = Instance.new("Frame")
+        container.Size = UDim2.new(1, 0, 0, 0)
+        container.AutomaticSize = Enum.AutomaticSize.Y
+        container.BorderSizePixel = 0
+        container.BackgroundTransparency = 1
+        container.Parent = listParent
+
+        local layout = Instance.new("UIListLayout")
+        layout.SortOrder = Enum.SortOrder.LayoutOrder
+        layout.Padding = UDim.new(0, 4)
+        layout.Parent = container
+
+        local header = Instance.new("TextButton")
+        header.Size = UDim2.new(1, 0, 0, 26)
+        header.BorderSizePixel = 0
+        header.AutoButtonColor = false
+        header.Parent = container
+        registerTheme(header, "BackgroundColor3", "Main")
+        addCorner(header, 6)
+
+        local count = Instance.new("TextLabel")
+        count.Size = UDim2.new(0, 28, 1, 0)
+        count.Position = UDim2.new(0, 6, 0, 0)
+        count.BackgroundTransparency = 1
+        count.Font = Enum.Font.GothamSemibold
+        count.TextSize = 12
+        count.TextXAlignment = Enum.TextXAlignment.Left
+        count.Text = tostring(group.Count or 0)
+        count.Parent = header
+        registerTheme(count, "TextColor3", "Muted")
+
+        local name = Instance.new("TextLabel")
+        name.Size = UDim2.new(1, -74, 1, 0)
+        name.Position = UDim2.new(0, 36, 0, 0)
+        name.BackgroundTransparency = 1
+        name.Font = Enum.Font.Gotham
+        name.TextSize = 12
+        name.TextXAlignment = Enum.TextXAlignment.Left
+        name.Text = group.Remote and group.Remote.Name or "Remote"
+        name.Parent = header
+        registerTheme(name, "TextColor3", "Text")
+
+        local kind = Instance.new("TextLabel")
+        kind.Size = UDim2.new(0, 42, 1, 0)
+        kind.Position = UDim2.new(1, -46, 0, 0)
+        kind.BackgroundTransparency = 1
+        kind.Font = Enum.Font.GothamSemibold
+        kind.TextSize = 10
+        kind.TextXAlignment = Enum.TextXAlignment.Right
+        kind.Text = group.IsEvent and "RE" or "RF"
+        kind.Parent = header
+        registerTheme(kind, "TextColor3", "Muted")
+
+        local historyFrame = Instance.new("Frame")
+        historyFrame.Size = UDim2.new(1, 0, 0, 0)
+        historyFrame.AutomaticSize = Enum.AutomaticSize.Y
+        historyFrame.BorderSizePixel = 0
+        historyFrame.BackgroundTransparency = 1
+        historyFrame.Visible = false
+        historyFrame.Parent = container
+
+        local historyList = Instance.new("UIListLayout")
+        historyList.SortOrder = Enum.SortOrder.LayoutOrder
+        historyList.Padding = UDim.new(0, 4)
+        historyList.Parent = historyFrame
+
+        local historyPad = Instance.new("UIPadding")
+        historyPad.PaddingLeft = UDim.new(0, 8)
+        historyPad.PaddingRight = UDim.new(0, 8)
+        historyPad.Parent = historyFrame
+
+        header.MouseButton1Click:Connect(function()
+            group.Expanded = not group.Expanded
+            historyFrame.Visible = group.Expanded
+            if group.Expanded then
+                rebuildHistoryList(group)
+            end
+        end)
+
+        group.UI = {
+            Container = container,
+            Header = {Frame = header, Name = name},
+            Count = count,
+            Kind = kind,
+            HistoryFrame = historyFrame,
+            HistoryRows = {},
+            EmptyLabel = nil
+        }
+
+        return group.UI
+    end
+
+    local function clearGroupHistory(group)
+        if not group then
+            return
+        end
+        group.History = {}
+        group.Count = 0
+        updateGroupCount(group)
+        if group.UI then
+            rebuildHistoryList(group)
+        end
+        if data.SelectedGroupKey == group.Key then
+            data.SelectedHistoryIndex = nil
+            ui.CodeLabel.Text = "Pilih remote untuk melihat detail."
+            ui.DetailTitle.Text = "Detail Remote"
+            updateDetailButtons(nil)
+        end
+    end
+
+    btnClearHistory.Button.MouseButton1Click:Connect(function()
+        local group = getSelectedEntry()
+        if not group then
+            return
+        end
+        clearGroupHistory(group)
+    end)
+
+    TS.AddToList = TS.AddToList or function(isEvent, remote, args, scriptRef, meta)
+        if not TS.Enabled then
+            return
+        end
+        if not remote or typeof(remote) ~= "Instance" then
+            return
+        end
+        if data.IgnoreList[remote] then
+            return
+        end
+        meta = meta or {}
+        local methodLabel = meta.Method or (isEvent and "FireServer" or "InvokeServer")
+        local direction = meta.Direction or "C2S"
+        local key = getGroupKey(remote, args, direction)
+        local group = data.Groups[key]
+        if not group then
+            group = {
+                Key = key,
+                Remote = remote,
+                IsEvent = isEvent,
+                Direction = direction,
+                History = {},
+                Count = 0,
+                Expanded = false,
+                UI = nil
+            }
+            data.Groups[key] = group
+            data.GroupList[#data.GroupList + 1] = key
+            data.GroupRows[key] = createGroupUI(group)
+            if data.BlockList[remote] then
+                setRowColor(group.UI.Header, "block")
+            elseif data.IgnoreList[remote] then
+                setRowColor(group.UI.Header, "ignore")
+            end
+        end
+
+        group.Count = (group.Count or 0) + 1
+        table.insert(group.History, {
+            Args = args,
+            Script = scriptRef,
+            Time = os.time(),
+            Method = methodLabel,
+            Direction = direction
+        })
+        updateGroupCount(group)
+
+        if group.Expanded then
+            rebuildHistoryList(group)
+        end
+    end
+
+    TS.HandleNamecall = TS.HandleNamecall or function(self, method, args)
+        if not TS.Enabled then
+            return true
+        end
+        if typeof(self) ~= "Instance" then
+            return true
+        end
+        local class = self.ClassName
+        if method == "FireServer" and (class == "RemoteEvent" or class == "UnreliableRemoteEvent") then
+            if data.BlockList[self] and type(checkcaller) == "function" and not checkcaller() then
+                return false
+            end
+            if data.IgnoreList[self] then
+                return true
+            end
+            TS.AddToList(true, self, args, getCallingScript())
+        elseif method == "InvokeServer" and class == "RemoteFunction" then
+            if data.BlockList[self] and type(checkcaller) == "function" and not checkcaller() then
+                return false
+            end
+            if data.IgnoreList[self] then
+                return true
+            end
+            TS.AddToList(false, self, args, getCallingScript())
+        end
+        return true
+    end
+
+    updateDetailButtons(nil)
+end
+
+State.DevSections.TurtleSpy = createSectionBox(DevTab:GetPage(), "TurtleSpy")
+State.TurtleSpy.Init(State.DevSections.TurtleSpy)
+
+State.RemoteHooks = State.RemoteHooks or {}
+State.RemoteHooks.EnsureNamecall = State.RemoteHooks.EnsureNamecall or function()
+    if State.Hooked then
+        return true
+    end
+    if not (hookfunction and getrawmetatable and setreadonly and newcclosure) then
+        return false
+    end
+    local mt = getrawmetatable(game)
+    setreadonly(mt, false)
+
+    local old = mt.__namecall
+    mt.__namecall = newcclosure(function(self, ...)
+        local method = getnamecallmethod()
+        local args = {...}
+        if State.RemoteC2SEnabled and NamecallLogHandler then
+            local ok, res = pcall(NamecallLogHandler, self, method, args)
+            if ok and res == false then
+                return nil
+            end
+        end
+        return old(self, ...)
+    end)
+    State.Mt = mt
+    State.OldNamecall = old
+    State.Hooked = true
+    setreadonly(mt, true)
+    return true
+end
+
+NamecallLogHandler = function(self, method, args)
+    local allow = true
+    if allow and State.TurtleSpy and State.TurtleSpy.HandleNamecall then
+        local ok, res = pcall(State.TurtleSpy.HandleNamecall, self, method, args)
+        if ok and res == false then
+            allow = false
+        end
+    end
+    return allow
+end
+
+local function hookRemote(obj)
     if obj:IsA("RemoteEvent") or obj.ClassName == "UnreliableRemoteEvent" then
         local conn = obj.OnClientEvent:Connect(function(...)
-            addLog(obj, {...})
+            if State.TurtleSpy and State.TurtleSpy.AddToList then
+                State.TurtleSpy.AddToList(true, obj, {...}, nil, {Method = "OnClientEvent", Direction = "S2C"})
+            end
         end)
         State.RemoteConnections[#State.RemoteConnections + 1] = conn
     end
@@ -5860,7 +6937,9 @@ local function hookRemote(obj)
         end
         pcall(function()
             obj.OnClientInvoke = function(...)
-                addLogEntry(".OnClientInvoke", obj:GetFullName(), {...})
+                if State.TurtleSpy and State.TurtleSpy.AddToList then
+                    State.TurtleSpy.AddToList(false, obj, {...}, nil, {Method = "OnClientInvoke", Direction = "S2C"})
+                end
             end
         end)
     end
@@ -8386,6 +9465,7 @@ State.InitHell = function()
         if Config.HellStarterEnabled == nil then Config.HellStarterEnabled = false end
         if Config.HellStarterUseUpgradeAll == nil then Config.HellStarterUseUpgradeAll = true end
         if Config.HellStarterSkipMaxed == nil then Config.HellStarterSkipMaxed = true end
+        if Config.HellStarterSkipMaxedDropper == nil then Config.HellStarterSkipMaxedDropper = true end
         if Config.HellStarterClickSpeed == nil then Config.HellStarterClickSpeed = 0.6 end
         if Config.HellStarterTeleportEnabled == nil then Config.HellStarterTeleportEnabled = false end
         if Config.HellStarterTeleportHold == nil then Config.HellStarterTeleportHold = 15 end
@@ -8518,10 +9598,14 @@ State.InitHell = function()
     local starterEnabled = Config.HellStarterEnabled == true
     local useUpgradeAll = Config.HellStarterUseUpgradeAll == true
     local skipMaxedEnabled = Config.HellStarterSkipMaxed == true
+    local skipMaxedDropperEnabled = Config.HellStarterSkipMaxedDropper == true
     local teleportEnabled = Config.HellStarterTeleportEnabled == true
     local autoBuyConn = nil
     local promptConn = nil
     local maxed = {}
+    local dropperMaxed = {}
+    local lastDropperName = nil
+    local lastDropperTime = nil
     local lastClick = 0
     local accum = 0
     local interval = 0.25
@@ -8551,16 +9635,33 @@ State.InitHell = function()
                 return
             end
             local lower = string.lower(msg)
-            if not string.find(lower, "already reached max upgrade", 1, true) then
-                return
-            end
-            for _, shop in ipairs(StarterShops) do
-                for _, item in ipairs(shop.Items) do
-                    if string.find(lower, string.lower(item), 1, true) then
-                        maxed[shop.Key] = maxed[shop.Key] or {}
-                        maxed[shop.Key][item] = true
+            if string.find(lower, "already reached max upgrade", 1, true) then
+                local candidates = {}
+                for _, shop in ipairs(StarterShops) do
+                    local key = shop.Key
+                    for _, item in ipairs(shop.Items) do
+                        candidates[#candidates + 1] = {Key = key, Item = item}
                     end
                 end
+                local resolved = State.ResolveMaxedMatches and State.ResolveMaxedMatches(lower, candidates) or {}
+                for _, entry in ipairs(resolved) do
+                    local key = entry.Key
+                    local item = entry.Item
+                    if key and item then
+                        maxed[key] = maxed[key] or {}
+                        maxed[key][item] = true
+                    end
+                end
+                return
+            end
+            if string.find(lower, "this dropper is already at max level", 1, true) then
+                if lastDropperName then
+                    local now = os.clock()
+                    if not lastDropperTime or (now - lastDropperTime) <= 10 then
+                        dropperMaxed[lastDropperName] = true
+                    end
+                end
+                return
             end
         end)
         trackConnection(promptConn)
@@ -8715,9 +9816,12 @@ State.InitHell = function()
                     if token ~= State.HellStarterTeleportToken or not isTeleportActive() then
                         break
                     end
-                    if dropperEnabled[name] then
+                    local isMaxedDropper = dropperMaxed[name] == true
+                    if dropperEnabled[name] and (not skipMaxedDropperEnabled or not isMaxedDropper) then
                         local data = State.HellTeleports and State.HellTeleports.Dropper and State.HellTeleports.Dropper[name] or nil
                         if data then
+                            lastDropperName = name
+                            lastDropperTime = os.clock()
                             teleportWithData(data)
                         end
                         local startStep = os.clock()
@@ -8737,6 +9841,7 @@ State.InitHell = function()
         starterEnabled = Config.HellStarterEnabled == true
         useUpgradeAll = Config.HellStarterUseUpgradeAll == true
         skipMaxedEnabled = Config.HellStarterSkipMaxed == true
+        skipMaxedDropperEnabled = Config.HellStarterSkipMaxedDropper == true
         teleportEnabled = Config.HellStarterTeleportEnabled == true
         if starterEnabled then
             startAutoBuy()
@@ -8867,6 +9972,9 @@ State.InitHell = function()
     end
 
     local StarterStepSlider = addStarterControl(createSlider(TeleportBox, "Dropper Step (sec)", "HellStarterTeleportStep", 1, 10, Config.HellStarterTeleportStep, nil, 1))
+    local StarterSkipDropperToggle = addStarterControl(createToggle(TeleportBox, "Skip Maxed Level Dropper", "HellStarterSkipMaxedDropper", Config.HellStarterSkipMaxedDropper, function(v)
+        skipMaxedDropperEnabled = v == true
+    end))
 
     local dropperListContainer
     addStarterControl(createListDropdownRow(TeleportBox, "Dropper List", function(open)
@@ -8898,12 +10006,14 @@ State.InitHell = function()
             ClickSpeed = 0.6,
             TeleportEnabled = false,
             TeleportHold = 15,
-            TeleportStep = 3
+            TeleportStep = 3,
+            SkipMaxedDropper = true
         }
 
         Config.HellStarterEnabled = defaults.Enabled
         Config.HellStarterUseUpgradeAll = defaults.UseUpgradeAll
         Config.HellStarterSkipMaxed = defaults.SkipMaxed
+        Config.HellStarterSkipMaxedDropper = defaults.SkipMaxedDropper
         Config.HellStarterClickSpeed = defaults.ClickSpeed
         Config.HellStarterTeleportEnabled = defaults.TeleportEnabled
         Config.HellStarterTeleportHold = defaults.TeleportHold
@@ -8926,6 +10036,9 @@ State.InitHell = function()
         end
         if StarterStepSlider and StarterStepSlider.Set then
             StarterStepSlider:Set(defaults.TeleportStep)
+        end
+        if StarterSkipDropperToggle and StarterSkipDropperToggle.Set then
+            StarterSkipDropperToggle:Set(defaults.SkipMaxedDropper)
         end
 
         for _, shop in ipairs(StarterShops) do
@@ -9033,6 +10146,29 @@ do
     end)
 
     local Event500KAutomationSection = createSectionBox(State.Tabs.Event500K:GetPage(), "Automation")
+    setupAutoBuyGroup(Event500KAutomationSection, {
+        GroupKey = "500K Event",
+        DisplayName = "Auto Buy Shop",
+        ModeToggleName = "Mode: Upgrade All",
+        SpeedLabel = "Click Speed (sec)",
+        CooldownKey = "500KEventAutoBuy",
+        DefaultCooldown = 0.6,
+        Shops = {
+            {
+                Key = "Event Shards",
+                DisplayName = "Event Shards Shop",
+                ShopName = "Event Shards",
+                Items = {
+                    "Event Shards",
+                    "Event Shards 2",
+                    "Event Luck",
+                    "Event Bulk",
+                    "Event Crystals",
+                    "Event Crystal Chance"
+                }
+            }
+        }
+    })
 end
 
 do
@@ -9528,6 +10664,35 @@ do
     end)
 
     local Event3MAutomationSection = createSectionBox(State.Tabs.Event3M:GetPage(), "Automation")
+    setupAutoBuyGroup(Event3MAutomationSection, {
+        GroupKey = "3M Event",
+        DisplayName = "Auto Buy Shop",
+        ModeToggleName = "Mode: Upgrade All",
+        SpeedLabel = "Click Speed (sec)",
+        CooldownKey = "3MEventAutoBuy",
+        DefaultCooldown = 0.6,
+        Shops = {
+            {
+                Key = "3M Coins",
+                DisplayName = "3M Coins Shop",
+                ShopName = "3M Coins",
+                Items = {
+                    "3M Coins",
+                    "3M Coins II",
+                    "3M Coins III",
+                    "3M Bulk",
+                    "3M Luck",
+                    "Super Tickets Chance",
+                    "3M Passive Gems",
+                    "3M Coins IV",
+                    "3M Coins V",
+                    "Final 3M Luck",
+                    "Auto 3M Event",
+                    "3M Passive Gems Chance"
+                }
+            }
+        }
+    })
 end
 
 do
@@ -9833,74 +10998,6 @@ createGrid(HeavenTeleportSection, HeavenList, function(item)
     teleportWithData(item.Data)
 end)
 
-do
-    local HeavenTeleportAutomation = createSubSectionBox(HeavenTeleportSection, "Automation")
-
-    local GloryAutoEnabled = false
-    local GloryAutoConn = nil
-    local GloryAutoAccum = 0
-    local GloryAutoInterval = 0.25
-    local GloryLastClick = 0
-
-    State.GloryAutoIndex = 1
-    State.GloryAutoOrder = {
-        "Grace",
-        "Grace II",
-        "Grace III",
-        "Heavenly Luck",
-        "Heavenly Bulk",
-        "Heaven Points",
-        "Heaven Points II",
-        "Glory"
-    }
-
-    setGlobalClickCooldown("Glory", 0.6)
-
-    createToggle(HeavenTeleportAutomation, "Auto Buy Glory", nil, false, function(v)
-        GloryAutoEnabled = v
-        if GloryAutoEnabled then
-            if GloryAutoConn then
-                GloryAutoConn:Disconnect()
-            end
-            GloryAutoAccum = 0
-            State.GloryAutoIndex = 1
-            GloryAutoConn = RunService.Heartbeat:Connect(function(dt)
-                GloryAutoAccum += dt
-                if GloryAutoAccum >= GloryAutoInterval then
-                    GloryAutoAccum = 0
-                    local remote = getGraceRemote()
-                    if not remote then return end
-                    local now = os.clock()
-                    if now - GloryLastClick < getGlobalClickCooldown("Glory") then
-                        return
-                    end
-                    local itemName = State.GloryAutoOrder[State.GloryAutoIndex]
-                    State.GloryAutoIndex += 1
-                    if State.GloryAutoIndex > #State.GloryAutoOrder then
-                        State.GloryAutoIndex = 1
-                    end
-                    if itemName then
-                        pcall(function()
-                            remote:FireServer("UpgradeAll", "Glory", itemName)
-                        end)
-                    end
-                    GloryLastClick = now
-                end
-            end)
-            trackConnection(GloryAutoConn)
-        else
-            if GloryAutoConn then
-                GloryAutoConn:Disconnect()
-                GloryAutoConn = nil
-            end
-        end
-    end)
-
-    createSlider(HeavenTeleportAutomation, "Glory Click Speed (sec)", nil, 0.1, 5, 0.6, function(v)
-        setGlobalClickCooldown("Glory", v)
-    end, 1)
-end
-
 local function setupHeavenAutoShop(section, opts)
     local function setControlsEnabled(controls, enabled)
         for _, ctrl in ipairs(controls) do
@@ -10014,9 +11111,15 @@ local function setupHeavenAutoShop(section, opts)
             if not string.find(lower, "already reached max upgrade", 1, true) then
                 return
             end
+            local candidates = {}
             for _, name in ipairs(State[opts.StateOrderKey]) do
-                if string.find(lower, string.lower(name), 1, true) then
-                    maxed[name] = true
+                candidates[#candidates + 1] = {Item = name}
+            end
+            local resolved = State.ResolveMaxedMatches and State.ResolveMaxedMatches(lower, candidates) or {}
+            for _, entry in ipairs(resolved) do
+                local item = entry.Item
+                if item then
+                    maxed[item] = true
                 end
             end
         end)
@@ -10243,9 +11346,15 @@ setupAutoShop = function(section, opts)
             if not string.find(lower, "already reached max upgrade", 1, true) then
                 return
             end
+            local candidates = {}
             for _, name in ipairs(State[opts.StateOrderKey]) do
-                if string.find(lower, string.lower(name), 1, true) then
-                    maxed[name] = true
+                candidates[#candidates + 1] = {Item = name}
+            end
+            local resolved = State.ResolveMaxedMatches and State.ResolveMaxedMatches(lower, candidates) or {}
+            for _, entry in ipairs(resolved) do
+                local item = entry.Item
+                if item then
+                    maxed[item] = true
                 end
             end
         end)
@@ -10547,6 +11656,21 @@ do
                 }
             },
             {
+                Key = "Glory",
+                DisplayName = "Glory Shop",
+                ShopName = "Glory",
+                Items = {
+                    "Grace",
+                    "Grace II",
+                    "Grace III",
+                    "Heavenly Luck",
+                    "Heavenly Bulk",
+                    "Heaven Points",
+                    "Heaven Points II",
+                    "Glory"
+                }
+            },
+            {
                 Key = "Divinity",
                 DisplayName = "Divinity Shop",
                 ShopName = "Divinity",
@@ -10686,3 +11810,4 @@ task.delay(0.1, function()
     end
     notify("Script Loaded", "Script berhasil", 5)
 end)
+
