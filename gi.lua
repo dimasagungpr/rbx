@@ -1,5 +1,5 @@
 -- =====================================================
--- UI Garden Incremental V1.0.46
+-- UI Garden Incremental V1.0.47
 -- =====================================================
 -- [WORK RULES]
 -- 1. Fitur baru: jangan tambah local di top-level; bungkus di fungsi/table (hindari limit 200).
@@ -43,7 +43,7 @@ local State = {
     RemoteHookConn = nil
 }
 
-State.Version = "V1.0.46"
+State.Version = "V1.0.47"
 State.ValidateVersion = function(labelText)
     if type(labelText) ~= "string" then
         return false
@@ -3257,6 +3257,18 @@ local function setupAutoBuyGroup(section, opts)
 
     setGlobalClickCooldown(opts.CooldownKey or groupKey, group.ClickSpeed)
 
+    local function getShopFireArgs(shop, itemName)
+        if not shop or not itemName then
+            return nil
+        end
+        if shop.SpecialAction == "MachinePartUpgrade" then
+            local isUpgrade = not useUpgradeAll
+            return "MachinePartUpgrade", itemName, isUpgrade
+        end
+        local action = useUpgradeAll and "UpgradeAll" or "Upgrade"
+        return action, (shop.ShopName or shop.Key), itemName
+    end
+
     local function attachPromptListener()
         if promptConn then
             return
@@ -3383,12 +3395,14 @@ local function setupAutoBuyGroup(section, opts)
                     if now - lastClick < getGlobalClickCooldown(opts.CooldownKey or groupKey) then
                         return
                     end
-                    local action = useUpgradeAll and "UpgradeAll" or "Upgrade"
                     local shop, itemName = getNextItem()
                     if shop and itemName then
-                        pcall(function()
-                            remote:FireServer(action, shop.ShopName or shop.Key, itemName)
-                        end)
+                        local a1, a2, a3 = getShopFireArgs(shop, itemName)
+                        if a1 then
+                            pcall(function()
+                                remote:FireServer(a1, a2, a3)
+                            end)
+                        end
                         if AutoBuyLogState.SetActiveItem then
                             AutoBuyLogState.SetActiveItem(groupKey, shop.Key, itemName)
                         end
@@ -11565,6 +11579,29 @@ State.InitFiveM = function()
         teleportWithData(item.Data)
     end)
 
+    local FiveMActionsSection = createSectionBox(State.Tabs.FiveM:GetPage(), "5M Event Actions")
+    local function fireFiveMAction(action)
+        local remote = getMainRemote and getMainRemote() or nil
+        if not remote then
+            return
+        end
+        pcall(function()
+            remote:FireServer(action)
+        end)
+    end
+
+    createButton(FiveMActionsSection, "Upgrade Bytes Machine", function()
+        fireFiveMAction("MachineLevelUp")
+    end)
+
+    createButton(FiveMActionsSection, "Upgrade Event Legend", function()
+        fireFiveMAction("EventLegend")
+    end)
+
+    createButton(FiveMActionsSection, "Passive Roll 5M Event", function()
+        fireFiveMAction("HandleAutoRoll5MEventPassive")
+    end)
+
     local FiveMAutomationSection = createSectionBox(State.Tabs.FiveM:GetPage(), "Automation")
     setupAutoBuyGroup(FiveMAutomationSection, {
         GroupKey = "5M Event",
@@ -11594,6 +11631,20 @@ State.InitFiveM = function()
                     "Event Tier Luck",
                     "Event Tier Bulk",
                     "Event Tier Luck II"
+                }
+            },
+            {
+                Key = "MachinePartUpgrade",
+                DisplayName = "Machine Part Upgrade",
+                ShopName = "MachinePartUpgrade",
+                SpecialAction = "MachinePartUpgrade",
+                Items = {
+                    "Bearings",
+                    "Casing",
+                    "Control Unit",
+                    "Fasteners",
+                    "Motor",
+                    "Shafts"
                 }
             }
         }
