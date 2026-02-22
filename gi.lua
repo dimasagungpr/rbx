@@ -1,5 +1,5 @@
 -- =====================================================
--- UI Garden Incremental V1.0.47
+-- UI Garden Incremental V1.0.57
 -- =====================================================
 -- [WORK RULES]
 -- 1. Fitur baru: jangan tambah local di top-level; bungkus di fungsi/table (hindari limit 200).
@@ -43,7 +43,7 @@ local State = {
     RemoteHookConn = nil
 }
 
-State.Version = "V1.0.47"
+State.Version = "V1.0.57"
 State.ValidateVersion = function(labelText)
     if type(labelText) ~= "string" then
         return false
@@ -3225,9 +3225,11 @@ local function setupAutoBuyGroup(section, opts)
     group.Items = group.Items or {}
     group.Enabled = group.Enabled == true
 
+    local shopByKey = {}
     for _, shop in ipairs(shops) do
         shop.Key = shop.Key or shop.ShopName or shop.DisplayName
         shop.DisplayName = shop.DisplayName or shop.ShopName or shop.Key
+        shopByKey[shop.Key] = shop
         if group.Shops[shop.Key] == nil then
             group.Shops[shop.Key] = false
         end
@@ -3241,6 +3243,52 @@ local function setupAutoBuyGroup(section, opts)
 
     saveConfig()
 
+    local function normalizeShopKeys(value)
+        if type(value) == "string" then
+            return {value}
+        end
+        if type(value) == "table" then
+            local list = {}
+            for _, key in ipairs(value) do
+                if type(key) == "string" then
+                    list[#list + 1] = key
+                end
+            end
+            if #list > 0 then
+                return list
+            end
+        end
+        return nil
+    end
+
+    local resetPromptCfg = opts.ResetMaxedOnPrompt
+    local resetPromptMatch = nil
+    local resetPromptShopKeys = nil
+    local resetPromptOnReset = nil
+    if type(resetPromptCfg) == "table" then
+        if type(resetPromptCfg.Match) == "string" then
+            resetPromptMatch = string.lower(resetPromptCfg.Match)
+        end
+        resetPromptShopKeys = normalizeShopKeys(resetPromptCfg.ShopKey)
+        if type(resetPromptCfg.OnReset) == "function" then
+            resetPromptOnReset = resetPromptCfg.OnReset
+        end
+    end
+
+    local resetPopupCfg = opts.ResetMaxedOnPopup
+    local resetPopupMatch = nil
+    local resetPopupShopKeys = nil
+    local resetPopupOnReset = nil
+    if type(resetPopupCfg) == "table" then
+        if type(resetPopupCfg.Match) == "string" then
+            resetPopupMatch = string.lower(resetPopupCfg.Match)
+        end
+        resetPopupShopKeys = normalizeShopKeys(resetPopupCfg.ShopKey)
+        if type(resetPopupCfg.OnReset) == "function" then
+            resetPopupOnReset = resetPopupCfg.OnReset
+        end
+    end
+
     local enabled = group.Enabled == true
     local conn = nil
     local accum = 0
@@ -3252,6 +3300,7 @@ local function setupAutoBuyGroup(section, opts)
     local shopEnabled = group.Shops
     local maxed = {}
     local promptConn = nil
+    local popupConn = nil
     local shopIndex = 1
     local itemIndex = {}
 
@@ -3267,6 +3316,43 @@ local function setupAutoBuyGroup(section, opts)
         end
         local action = useUpgradeAll and "UpgradeAll" or "Upgrade"
         return action, (shop.ShopName or shop.Key), itemName
+    end
+
+    local function resetShopMaxed(shopKey)
+        local shop = shopByKey[shopKey]
+        if not shop then
+            return
+        end
+        maxed[shopKey] = nil
+        itemIndex[shopKey] = 1
+        if AutoBuyLogState.SetItemSkipped then
+            for _, item in ipairs(shop.Items or {}) do
+                AutoBuyLogState.SetItemSkipped(groupKey, shopKey, item, false)
+            end
+        end
+    end
+
+    local function argsHasMatch(args, match, depth)
+        if not match or type(args) ~= "table" then
+            return false
+        end
+        depth = depth or 0
+        if depth > 4 then
+            return false
+        end
+        for _, v in pairs(args) do
+            if type(v) == "string" then
+                local lower = string.lower(v)
+                if string.find(lower, match, 1, true) then
+                    return true
+                end
+            elseif type(v) == "table" then
+                if argsHasMatch(v, match, depth + 1) then
+                    return true
+                end
+            end
+        end
+        return false
     end
 
     local function attachPromptListener()
@@ -3287,6 +3373,17 @@ local function setupAutoBuyGroup(section, opts)
                 return
             end
             local lower = string.lower(msg)
+            if resetPromptMatch and string.find(lower, resetPromptMatch, 1, true) then
+                if resetPromptShopKeys then
+                    for _, key in ipairs(resetPromptShopKeys) do
+                        resetShopMaxed(key)
+                    end
+                end
+                if resetPromptOnReset then
+                    pcall(resetPromptOnReset)
+                end
+                return
+            end
             if not string.find(lower, "already reached max upgrade", 1, true) then
                 return
             end
@@ -3313,10 +3410,46 @@ local function setupAutoBuyGroup(section, opts)
         trackConnection(promptConn)
     end
 
+    local function attachPopupListener()
+        if popupConn or not resetPopupMatch then
+            return
+        end
+        local ok, remote = pcall(function()
+            return game:GetService("ReplicatedStorage").Packages.Knit.Services.RemotesService.RE.PopUp
+        end)
+        if not ok or not remote or not remote:IsA("RemoteEvent") then
+            return
+        end
+        popupConn = remote.OnClientEvent:Connect(function(...)
+            if not enabled then
+                return
+            end
+            local args = {...}
+            if argsHasMatch(args, resetPopupMatch) then
+                if resetPopupShopKeys then
+                    for _, key in ipairs(resetPopupShopKeys) do
+                        resetShopMaxed(key)
+                    end
+                end
+                if resetPopupOnReset then
+                    pcall(resetPopupOnReset)
+                end
+            end
+        end)
+        trackConnection(popupConn)
+    end
+
     local function detachPromptListener()
         if promptConn then
             promptConn:Disconnect()
             promptConn = nil
+        end
+    end
+
+    local function detachPopupListener()
+        if popupConn then
+            popupConn:Disconnect()
+            popupConn = nil
         end
     end
 
@@ -3378,6 +3511,7 @@ local function setupAutoBuyGroup(section, opts)
                 AutoBuyLogState.ClearSkippedGroup(groupKey)
             end
             attachPromptListener()
+            attachPopupListener()
             conn = RunService.Heartbeat:Connect(function(dt)
                 accum += dt
                 if accum >= interval then
@@ -3417,6 +3551,7 @@ local function setupAutoBuyGroup(section, opts)
                 conn = nil
             end
             detachPromptListener()
+            detachPopupListener()
         end
     end
 
@@ -9372,6 +9507,14 @@ State.InitHell = function()
         SpeedLabel = "Click Speed (sec)",
         CooldownKey = "HellAutoBuy",
         DefaultCooldown = 0.6,
+        ResetMaxedOnPrompt = {
+            Match = "Successfully Reached Hell Rank",
+            ShopKey = {"Madness", "Hell XP"}
+        },
+        ResetMaxedOnPopup = {
+            Match = "SinsGain",
+            ShopKey = {"Madness", "Hell XP"}
+        },
         Shops = {
             {
                 Key = "Madness",
@@ -9616,6 +9759,7 @@ State.InitHell = function()
     local teleportEnabled = Config.HellStarterTeleportEnabled == true
     local autoBuyConn = nil
     local promptConn = nil
+    local popupConn = nil
     local maxed = {}
     local dropperMaxed = {}
     local lastDropperName = nil
@@ -9623,6 +9767,9 @@ State.InitHell = function()
     local lastClick = 0
     local accum = 0
     local interval = 0.25
+    local initialToken = 0
+    local initialRunning = false
+    local initialDone = false
     State.HellStarterTeleportToken = State.HellStarterTeleportToken or 0
     State.HellStarterTeleportRunning = State.HellStarterTeleportRunning or false
 
@@ -9630,6 +9777,52 @@ State.InitHell = function()
     State.HellStarterItemIndex = State.HellStarterItemIndex or {}
 
     setGlobalClickCooldown("HellStarterAuto", Config.HellStarterClickSpeed)
+
+    local function argsHasMatch(args, match, depth)
+        if not match or type(args) ~= "table" then
+            return false
+        end
+        depth = depth or 0
+        if depth > 4 then
+            return false
+        end
+        for _, v in pairs(args) do
+            if type(v) == "string" then
+                local lower = string.lower(v)
+                if string.find(lower, match, 1, true) then
+                    return true
+                end
+            elseif type(v) == "table" then
+                if argsHasMatch(v, match, depth + 1) then
+                    return true
+                end
+            end
+        end
+        return false
+    end
+
+    local function resetStarterMaxedShops(shopKeys)
+        if type(shopKeys) ~= "table" then
+            return
+        end
+        for _, key in ipairs(shopKeys) do
+            maxed[key] = nil
+            State.HellStarterItemIndex[key] = 1
+        end
+    end
+
+    local function resetStarterDropperMaxed()
+        dropperMaxed = {}
+    end
+
+    local function triggerStarterResetTeleport()
+        resetStarterMaxedShops({"Madness", "HellXP"})
+        resetStarterDropperMaxed()
+        if starterEnabled then
+            initialDone = false
+            runStarterInitialTeleport()
+        end
+    end
 
     local function attachPromptListener()
         if promptConn then
@@ -9649,6 +9842,10 @@ State.InitHell = function()
                 return
             end
             local lower = string.lower(msg)
+            if string.find(lower, "successfully reached hell rank", 1, true) then
+                triggerStarterResetTeleport()
+                return
+            end
             if string.find(lower, "already reached max upgrade", 1, true) then
                 local candidates = {}
                 for _, shop in ipairs(StarterShops) do
@@ -9681,10 +9878,39 @@ State.InitHell = function()
         trackConnection(promptConn)
     end
 
+    local function attachPopupListener()
+        if popupConn then
+            return
+        end
+        local ok, remote = pcall(function()
+            return game:GetService("ReplicatedStorage").Packages.Knit.Services.RemotesService.RE.PopUp
+        end)
+        if not ok or not remote or not remote:IsA("RemoteEvent") then
+            return
+        end
+        popupConn = remote.OnClientEvent:Connect(function(...)
+            if not starterEnabled then
+                return
+            end
+            local args = {...}
+            if argsHasMatch(args, "sinsgain") then
+                triggerStarterResetTeleport()
+            end
+        end)
+        trackConnection(popupConn)
+    end
+
     local function detachPromptListener()
         if promptConn then
             promptConn:Disconnect()
             promptConn = nil
+        end
+    end
+
+    local function detachPopupListener()
+        if popupConn then
+            popupConn:Disconnect()
+            popupConn = nil
         end
     end
 
@@ -9730,6 +9956,7 @@ State.InitHell = function()
             State.HellStarterItemIndex[shop.Key] = 1
         end
         attachPromptListener()
+        attachPopupListener()
         autoBuyConn = RunService.Heartbeat:Connect(function(dt)
             if not starterEnabled then
                 return
@@ -9766,6 +9993,7 @@ State.InitHell = function()
             autoBuyConn = nil
         end
         detachPromptListener()
+        detachPopupListener()
     end
 
     local function canTeleport()
@@ -9790,6 +10018,44 @@ State.InitHell = function()
         State.HellStarterTeleportHoldStart = nil
         State.HellStarterTeleportHoldSeconds = nil
         setTeleportLabel("Hold: idle")
+    end
+
+    local function runStarterInitialTeleport()
+        if not starterEnabled then
+            return
+        end
+        initialToken += 1
+        local token = initialToken
+        initialRunning = true
+        initialDone = false
+        stopTeleportLoop()
+        task.spawn(function()
+            local dropperData = State.HellTeleports and State.HellTeleports.Dropper and State.HellTeleports.Dropper["One"] or nil
+            if dropperData then
+                teleportWithData(dropperData)
+            end
+            local startWait = os.clock()
+            while token == initialToken and (os.clock() - startWait) < 1 do
+                task.wait(0.1)
+            end
+            if token ~= initialToken or not starterEnabled then
+                initialRunning = false
+                return
+            end
+            local madnessData = State.HellTeleports and State.HellTeleports.Madness or nil
+            if madnessData then
+                teleportWithData(madnessData)
+            end
+            initialDone = true
+            initialRunning = false
+            if canTeleport() then
+                startTeleportLoop()
+                local holdSeconds = math.clamp(tonumber(Config.HellStarterTeleportHold) or 15, 15, 900)
+                setTeleportLabel(string.format("Hold: %.1fs", holdSeconds))
+            else
+                setTeleportLabel("Hold: idle")
+            end
+        end)
     end
 
     local function startTeleportLoop()
@@ -9859,14 +10125,12 @@ State.InitHell = function()
         teleportEnabled = Config.HellStarterTeleportEnabled == true
         if starterEnabled then
             startAutoBuy()
+            runStarterInitialTeleport()
         else
             stopAutoBuy()
-        end
-        if canTeleport() then
-            startTeleportLoop()
-            local holdSeconds = math.clamp(tonumber(Config.HellStarterTeleportHold) or 15, 15, 900)
-            setTeleportLabel(string.format("Hold: %.1fs", holdSeconds))
-        else
+            initialToken += 1
+            initialRunning = false
+            initialDone = false
             stopTeleportLoop()
         end
         if State.FullAutomationLog and State.FullAutomationLog.SetActive then
@@ -9930,9 +10194,15 @@ State.InitHell = function()
     local StarterTeleportToggle = addStarterControl(createToggle(TeleportBox, "Enable Auto Teleport", "HellStarterTeleportEnabled", Config.HellStarterTeleportEnabled, function(v)
         teleportEnabled = v
         if canTeleport() then
-            startTeleportLoop()
-            local holdSeconds = math.clamp(tonumber(Config.HellStarterTeleportHold) or 15, 15, 900)
-            setTeleportLabel(string.format("Hold: %.1fs", holdSeconds))
+            if starterEnabled then
+                if initialDone and not initialRunning then
+                    startTeleportLoop()
+                    local holdSeconds = math.clamp(tonumber(Config.HellStarterTeleportHold) or 15, 15, 900)
+                    setTeleportLabel(string.format("Hold: %.1fs", holdSeconds))
+                else
+                    runStarterInitialTeleport()
+                end
+            end
         else
             stopTeleportLoop()
         end
@@ -10330,142 +10600,575 @@ do
             22.947010,
             0.500,
             40.000
-        )},
-        {Label = "Boss 1", Data = makeData(
-            Vector3.new(-2092.624, 19.919, -2027.826),
-            CFrame.new(-2076.988770, 33.313568, -2052.577881, -0.845453262, -0.201025277, 0.494770318, 0.000000000, 0.926450491, 0.376417011, -0.534049392, 0.318242997, -0.783270597),
-            CFrame.new(-2092.623535, 21.418791, -2027.826416, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
-            70.000,
-            Enum.CameraType.Custom,
-            31.600105,
-            0.500,
-            40.000
-        )},
-        {Label = "Boss 2", Data = makeData(
-            Vector3.new(-2217.817, 19.919, -2027.757),
-            CFrame.new(-2211.418213, 29.768099, -2057.554688, -0.977711976, -0.055472907, 0.202489734, 0.000000000, 0.964462817, 0.264218599, -0.209950805, 0.258329690, -0.942966819),
-            CFrame.new(-2217.816895, 21.418791, -2027.756836, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
-            70.000,
-            Enum.CameraType.Custom,
-            31.600096,
-            0.500,
-            40.000
-        )},
-        {Label = "Boss 3", Data = makeData(
-            Vector3.new(-2220.480, 19.919, -2260.211),
-            CFrame.new(-2228.719482, 29.595963, -2230.820068, 0.962882936, 0.069847323, -0.260725409, 0.000000000, 0.965938628, 0.258771241, 0.269919187, -0.249166414, 0.930085897),
-            CFrame.new(-2220.480469, 21.418791, -2260.210693, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
-            70.000,
-            Enum.CameraType.Custom,
-            31.599941,
-            0.500,
-            40.000
-        )},
-        {Label = "Boss 4", Data = makeData(
-            Vector3.new(-2090.565, 19.734, -2263.877),
-            CFrame.new(-2086.972412, 32.797325, -2234.693604, 0.992502272, -0.044726547, 0.113747679, 0.000000000, 0.930640101, 0.365935594, -0.122225188, -0.363191903, 0.923662603),
-            CFrame.new(-2090.566895, 21.233759, -2263.881348, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
-            70.000,
-            Enum.CameraType.Custom,
-            31.600012,
-            0.500,
-            40.000
-        )},
-        {Label = "Mob 10", Data = makeData(
-            Vector3.new(-2258.677, 19.419, -2138.837),
-            CFrame.new(-2246.477051, 36.128731, -2150.935303, -0.704145789, -0.470645428, 0.531668782, 0.000000000, 0.748770833, 0.662829041, -0.710055530, 0.466728270, -0.527243733),
-            CFrame.new(-2258.677246, 20.918791, -2138.836670, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
-            70.000,
-            Enum.CameraType.Custom,
-            22.946981,
-            0.500,
-            40.000
-        )},
-        {Label = "Mob 10", Data = makeData(
-            Vector3.new(-2305.207, 19.419, -2149.039),
-            CFrame.new(-2286.398193, 33.015614, -2143.894043, 0.263863444, -0.508480787, 0.819648445, 0.000000000, 0.849764049, 0.527163446, -0.964560032, -0.139099166, 0.224221677),
-            CFrame.new(-2305.206787, 20.918793, -2149.039307, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
-            70.000,
-            Enum.CameraType.Custom,
-            22.947113,
-            0.500,
-            40.000
-        )},
-        {Label = "Mob 10", Data = makeData(
-            Vector3.new(-2274.982, 19.419, -2178.434),
-            CFrame.new(-2288.335938, 34.517139, -2165.654297, 0.691394150, 0.428139031, -0.581954718, 0.000000000, 0.805498421, 0.592598081, 0.722477913, -0.409718841, 0.556916773),
-            CFrame.new(-2274.981934, 20.918791, -2178.433838, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
-            70.000,
-            Enum.CameraType.Custom,
-            22.946920,
-            0.500,
-            40.000
-        )},
-        {Label = "Mob 90", Data = makeData(
-            Vector3.new(-2252.533, 19.419, -2174.950),
-            CFrame.new(-2267.866455, 36.128735, -2182.702393, -0.451180369, 0.591530442, -0.668227494, 0.000000000, 0.748770595, 0.662829220, 0.892432690, 0.299055547, -0.337830663),
-            CFrame.new(-2252.532715, 20.918791, -2174.950195, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
-            70.000,
-            Enum.CameraType.Custom,
-            22.946951,
-            0.500,
-            40.000
-        )},
-        {Label = "Mob 90", Data = makeData(
-            Vector3.new(-2231.636, 19.919, -2164.387),
-            CFrame.new(-2246.969727, 36.628754, -2172.139160, -0.451180369, 0.591530442, -0.668227494, 0.000000000, 0.748770595, 0.662829220, 0.892432690, 0.299055547, -0.337830663),
-            CFrame.new(-2231.635986, 21.418812, -2164.386963, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
-            70.000,
-            Enum.CameraType.Custom,
-            22.946949,
-            0.500,
-            40.000
-        )},
-        {Label = "Mob 90", Data = makeData(
-            Vector3.new(-2244.742, 19.419, -2118.371),
-            CFrame.new(-2233.265625, 39.126701, -2126.329834, -0.569861412, -0.652032197, 0.500112057, 0.000000000, 0.608600736, 0.793476701, -0.821740806, 0.452171743, -0.346818060),
-            CFrame.new(-2244.741699, 20.918791, -2118.371338, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
-            70.000,
-            Enum.CameraType.Custom,
-            22.947025,
-            0.500,
-            40.000
-        )},
-        {Label = "Mob 700", Data = makeData(
-            Vector3.new(-2207.332, 19.419, -2097.701),
-            CFrame.new(-2213.806152, 28.429708, -2107.057617, -0.822337270, 0.313481271, -0.474858880, 0.000000000, 0.834549308, 0.550933301, 0.569000423, 0.453052998, -0.686280966),
-            CFrame.new(-2207.332275, 20.918791, -2097.701416, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
-            70.000,
-            Enum.CameraType.Custom,
-            13.633175,
-            0.500,
-            40.000
-        )},
-        {Label = "Mob 700", Data = makeData(
-            Vector3.new(-2231.430, 19.419, -2088.590),
-            CFrame.new(-2220.060547, 28.429712, -2088.160889, 0.037680522, -0.550542355, 0.833956480, 0.000000000, 0.834549189, 0.550933599, -0.999289870, -0.020759465, 0.031446245),
-            CFrame.new(-2231.429932, 20.918791, -2088.589600, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
-            70.000,
-            Enum.CameraType.Custom,
-            13.633072,
-            0.500,
-            40.000
-        )},
-        {Label = "Mob 700", Data = makeData(
-            Vector3.new(-2221.462, 19.419, -2135.914),
-            CFrame.new(-2232.647949, 28.621281, -2134.725830, 0.105579346, 0.561827600, -0.820489287, 0.000000000, 0.825100839, 0.564985394, 0.994410813, -0.059650790, 0.087113619),
-            CFrame.new(-2221.462158, 20.918791, -2135.913574, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
-            70.000,
-            Enum.CameraType.Custom,
-            13.633085,
-            0.500,
-            40.000
         )}
     }
     registerRuneLocations("Halloween", HalloweenList)
     createGrid(HalloweenTeleportSection, HalloweenList, function(item)
         teleportWithData(item.Data)
     end)
+
+    local HalloweenEnemySection = createSectionBox(State.Tabs.Halloween:GetPage(), "Enemy")
+    local HalloweenEnemyList = {
+        {
+            Label = "Boss Enemy",
+            Cycle = {
+                makeData(
+                    Vector3.new(-2092.624, 19.919, -2027.826),
+                    CFrame.new(-2076.988770, 33.313568, -2052.577881, -0.845453262, -0.201025277, 0.494770318, 0.000000000, 0.926450491, 0.376417011, -0.534049392, 0.318242997, -0.783270597),
+                    CFrame.new(-2092.623535, 21.418791, -2027.826416, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    31.600105,
+                    0.500,
+                    40.000
+                ),
+                makeData(
+                    Vector3.new(-2217.817, 19.919, -2027.757),
+                    CFrame.new(-2211.418213, 29.768099, -2057.554688, -0.977711976, -0.055472907, 0.202489734, 0.000000000, 0.964462817, 0.264218599, -0.209950805, 0.258329690, -0.942966819),
+                    CFrame.new(-2217.816895, 21.418791, -2027.756836, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    31.600096,
+                    0.500,
+                    40.000
+                ),
+                makeData(
+                    Vector3.new(-2220.480, 19.919, -2260.211),
+                    CFrame.new(-2228.719482, 29.595963, -2230.820068, 0.962882936, 0.069847323, -0.260725409, 0.000000000, 0.965938628, 0.258771241, 0.269919187, -0.249166414, 0.930085897),
+                    CFrame.new(-2220.480469, 21.418791, -2260.210693, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    31.599941,
+                    0.500,
+                    40.000
+                ),
+                makeData(
+                    Vector3.new(-2090.565, 19.734, -2263.877),
+                    CFrame.new(-2086.972412, 32.797325, -2234.693604, 0.992502272, -0.044726547, 0.113747679, 0.000000000, 0.930640101, 0.365935594, -0.122225188, -0.363191903, 0.923662603),
+                    CFrame.new(-2090.566895, 21.233759, -2263.881348, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    31.600012,
+                    0.500,
+                    40.000
+                ),
+                makeData(
+                    Vector3.new(-2165.413, 19.919, -2141.760),
+                    CFrame.new(-2171.543213, 40.356079, -2107.064209, 0.984748423, 0.082368985, -0.153250992, 0.000000000, 0.880832613, 0.473427862, 0.173984230, -0.466207355, 0.867398560),
+                    CFrame.new(-2165.413086, 21.418962, -2141.760254, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    40.000107,
+                    0.500,
+                    40.000
+                )
+            }
+        },
+        {
+            Label = "10 HP",
+            Cycle = {
+                makeData(
+                    Vector3.new(-2258.677, 19.419, -2138.837),
+                    CFrame.new(-2246.477051, 36.128731, -2150.935303, -0.704145789, -0.470645428, 0.531668782, 0.000000000, 0.748770833, 0.662829041, -0.710055530, 0.466728270, -0.527243733),
+                    CFrame.new(-2258.677246, 20.918791, -2138.836670, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    22.946981,
+                    0.500,
+                    40.000
+                ),
+                makeData(
+                    Vector3.new(-2305.207, 19.419, -2149.039),
+                    CFrame.new(-2286.398193, 33.015614, -2143.894043, 0.263863444, -0.508480787, 0.819648445, 0.000000000, 0.849764049, 0.527163446, -0.964560032, -0.139099166, 0.224221677),
+                    CFrame.new(-2305.206787, 20.918793, -2149.039307, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    22.947113,
+                    0.500,
+                    40.000
+                ),
+                makeData(
+                    Vector3.new(-2274.982, 19.419, -2178.434),
+                    CFrame.new(-2288.335938, 34.517139, -2165.654297, 0.691394150, 0.428139031, -0.581954718, 0.000000000, 0.805498421, 0.592598081, 0.722477913, -0.409718841, 0.556916773),
+                    CFrame.new(-2274.981934, 20.918791, -2178.433838, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    22.946920,
+                    0.500,
+                    40.000
+                )
+            }
+        },
+        {
+            Label = "90 HP",
+            Cycle = {
+                makeData(
+                    Vector3.new(-2252.533, 19.419, -2174.950),
+                    CFrame.new(-2267.866455, 36.128735, -2182.702393, -0.451180369, 0.591530442, -0.668227494, 0.000000000, 0.748770595, 0.662829220, 0.892432690, 0.299055547, -0.337830663),
+                    CFrame.new(-2252.532715, 20.918791, -2174.950195, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    22.946951,
+                    0.500,
+                    40.000
+                ),
+                makeData(
+                    Vector3.new(-2231.636, 19.919, -2164.387),
+                    CFrame.new(-2246.969727, 36.628754, -2172.139160, -0.451180369, 0.591530442, -0.668227494, 0.000000000, 0.748770595, 0.662829220, 0.892432690, 0.299055547, -0.337830663),
+                    CFrame.new(-2231.635986, 21.418812, -2164.386963, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    22.946949,
+                    0.500,
+                    40.000
+                ),
+                makeData(
+                    Vector3.new(-2244.742, 19.419, -2118.371),
+                    CFrame.new(-2233.265625, 39.126701, -2126.329834, -0.569861412, -0.652032197, 0.500112057, 0.000000000, 0.608600736, 0.793476701, -0.821740806, 0.452171743, -0.346818060),
+                    CFrame.new(-2244.741699, 20.918791, -2118.371338, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    22.947025,
+                    0.500,
+                    40.000
+                )
+            }
+        },
+        {
+            Label = "700 HP",
+            Cycle = {
+                makeData(
+                    Vector3.new(-2207.332, 19.419, -2097.701),
+                    CFrame.new(-2213.806152, 28.429708, -2107.057617, -0.822337270, 0.313481271, -0.474858880, 0.000000000, 0.834549308, 0.550933301, 0.569000423, 0.453052998, -0.686280966),
+                    CFrame.new(-2207.332275, 20.918791, -2097.701416, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    13.633175,
+                    0.500,
+                    40.000
+                ),
+                makeData(
+                    Vector3.new(-2231.430, 19.419, -2088.590),
+                    CFrame.new(-2220.060547, 28.429712, -2088.160889, 0.037680522, -0.550542355, 0.833956480, 0.000000000, 0.834549189, 0.550933599, -0.999289870, -0.020759465, 0.031446245),
+                    CFrame.new(-2231.429932, 20.918791, -2088.589600, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    13.633072,
+                    0.500,
+                    40.000
+                ),
+                makeData(
+                    Vector3.new(-2221.462, 19.419, -2135.914),
+                    CFrame.new(-2232.647949, 28.621281, -2134.725830, 0.105579346, 0.561827600, -0.820489287, 0.000000000, 0.825100839, 0.564985394, 0.994410813, -0.059650790, 0.087113619),
+                    CFrame.new(-2221.462158, 20.918791, -2135.913574, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    13.633085,
+                    0.500,
+                    40.000
+                )
+            }
+        },
+        {
+            Label = "5K HP",
+            Cycle = {
+                makeData(
+                    Vector3.new(-2194.794, 19.419, -2163.864),
+                    CFrame.new(-2190.353271, 28.557690, -2153.482422, 0.919406533, -0.220378891, 0.325767905, 0.000000000, 0.828275740, 0.560320675, -0.393308520, -0.515162468, 0.761522174),
+                    CFrame.new(-2194.794434, 20.918791, -2163.864258, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    13.633019,
+                    0.500,
+                    40.000
+                ),
+                makeData(
+                    Vector3.new(-2207.905, 19.419, -2190.938),
+                    CFrame.new(-2204.409912, 28.365398, -2201.809570, -0.952025414, -0.167152360, 0.256335050, 0.000000000, 0.837644458, 0.546215832, -0.306018889, 0.520011365, -0.797458887),
+                    CFrame.new(-2207.904541, 20.918791, -2190.937744, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    13.633084,
+                    0.500,
+                    40.000
+                ),
+                makeData(
+                    Vector3.new(-2236.336, 19.419, -2199.881),
+                    CFrame.new(-2224.794922, 28.170973, -2200.123047, -0.020951571, -0.531837761, 0.846587121, 0.000000000, 0.846773028, 0.531954527, -0.999780536, 0.011145283, -0.017741224),
+                    CFrame.new(-2236.336426, 20.918791, -2199.881104, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    13.633011,
+                    0.500,
+                    40.000
+                )
+            }
+        },
+        {
+            Label = "45K HP",
+            Cycle = {
+                makeData(
+                    Vector3.new(-2207.899, 19.419, -2062.469),
+                    CFrame.new(-2201.087158, 29.243635, -2070.845215, -0.775832117, -0.385273993, 0.499648482, 0.000000000, 0.791911960, 0.610635400, -0.630939484, 0.473750561, -0.614390671),
+                    CFrame.new(-2207.898926, 20.918791, -2062.469238, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    13.633056,
+                    0.500,
+                    40.000
+                ),
+                makeData(
+                    Vector3.new(-2180.757, 19.419, -2071.824),
+                    CFrame.new(-2181.059326, 28.170982, -2060.283936, 0.999657512, 0.013920069, -0.022158127, 0.000000000, 0.846772432, 0.531955242, 0.026167745, -0.531773031, 0.846482515),
+                    CFrame.new(-2180.757324, 20.918791, -2071.824219, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    13.633181,
+                    0.500,
+                    40.000
+                ),
+                makeData(
+                    Vector3.new(-2185.230, 19.419, -2129.082),
+                    CFrame.new(-2175.940186, 29.364979, -2123.770020, 0.496360302, -0.537829638, 0.681443870, 0.000000000, 0.784968138, 0.619536161, -0.868116617, -0.307513148, 0.389627010),
+                    CFrame.new(-2185.230469, 20.918791, -2129.081787, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    13.633134,
+                    0.500,
+                    40.000
+                )
+            }
+        },
+        {
+            Label = "385K HP",
+            Cycle = {
+                makeData(
+                    Vector3.new(-2228.725, 19.419, -2057.630),
+                    CFrame.new(-2218.619141, 29.955250, -2059.068115, -0.140910402, -0.656219482, 0.741296470, 0.000000000, 0.748767376, 0.662832975, -0.990022361, 0.093400061, -0.105509110),
+                    CFrame.new(-2228.725342, 20.918791, -2057.629639, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    13.633125,
+                    0.500,
+                    40.000
+                ),
+                makeData(
+                    Vector3.new(-2192.420, 19.419, -2039.989),
+                    CFrame.new(-2185.999268, 28.810690, -2049.063721, -0.816344798, -0.334339857, 0.470954448, 0.000000000, 0.815413952, 0.578878403, -0.577564895, 0.472564369, -0.665658891),
+                    CFrame.new(-2192.419922, 20.918791, -2039.988647, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    13.633188,
+                    0.500,
+                    40.000
+                ),
+                makeData(
+                    Vector3.new(-2211.655, 19.419, -2008.097),
+                    CFrame.new(-2206.555908, 28.810690, -2017.974976, -0.888621628, -0.265497416, 0.373982310, 0.000000000, 0.815413892, 0.578878403, -0.458641082, 0.514403880, -0.724594414),
+                    CFrame.new(-2211.654541, 20.918791, -2008.096558, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    13.633095,
+                    0.500,
+                    40.000
+                )
+            }
+        },
+        {
+            Label = "3.25M HP",
+            Cycle = {
+                makeData(
+                    Vector3.new(-2231.901, 19.419, -2230.503),
+                    CFrame.new(-2228.343994, 28.557749, -2219.785889, 0.949092925, -0.176500261, 0.260902852, 0.000000000, 0.828272939, 0.560324967, -0.314996243, -0.531800449, 0.786107957),
+                    CFrame.new(-2231.900879, 20.918791, -2230.502930, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    13.633051,
+                    0.500,
+                    40.000
+                ),
+                makeData(
+                    Vector3.new(-2203.733, 19.419, -2248.818),
+                    CFrame.new(-2211.306152, 28.557749, -2240.442139, 0.741748571, 0.375797659, -0.555504501, 0.000000000, 0.828272939, 0.560324967, 0.670678079, -0.415620238, 0.614370227),
+                    CFrame.new(-2203.732910, 20.918791, -2248.817871, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    13.633069,
+                    0.500,
+                    40.000
+                ),
+                makeData(
+                    Vector3.new(-2223.095, 19.419, -2284.687),
+                    CFrame.new(-2226.492432, 29.955282, -2275.061279, 0.942993879, 0.220598251, -0.249196544, 0.000000000, 0.748765111, 0.662835360, 0.332810014, -0.625049710, 0.706080973),
+                    CFrame.new(-2223.095215, 20.918791, -2284.687256, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    13.633000,
+                    0.500,
+                    40.000
+                )
+            }
+        },
+        {
+            Label = "30M HP",
+            Cycle = {
+                makeData(
+                    Vector3.new(-2189.242, 19.419, -2229.958),
+                    CFrame.new(-2194.424316, 27.168848, -2240.909668, -0.903928638, 0.196070403, -0.380091250, 0.000000000, 0.888721347, 0.458447754, 0.427683204, 0.414404064, -0.803340793),
+                    CFrame.new(-2189.242432, 20.918791, -2229.957764, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    13.633024,
+                    0.500,
+                    40.000
+                ),
+                makeData(
+                    Vector3.new(-2180.613, 19.419, -2198.075),
+                    CFrame.new(-2185.604492, 27.305222, -2209.037354, -0.910101473, 0.194119260, -0.366105229, 0.000000000, 0.883489609, 0.468450934, 0.414385468, 0.426337898, -0.804065168),
+                    CFrame.new(-2180.613281, 20.918791, -2198.075439, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    13.633130,
+                    0.500,
+                    40.000
+                ),
+                makeData(
+                    Vector3.new(-2137.502, 19.419, -2222.558),
+                    CFrame.new(-2147.530273, 28.747879, -2217.658447, 0.439008266, 0.515972853, -0.735556841, 0.000000000, 0.818665266, 0.574271142, 0.898483038, -0.252109766, 0.359400809),
+                    CFrame.new(-2137.502441, 20.918791, -2222.558105, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    13.633000,
+                    0.500,
+                    40.000
+                )
+            }
+        },
+        {
+            Label = "250M HP",
+            Cycle = {
+                makeData(
+                    Vector3.new(-2149.782, 19.419, -2189.356),
+                    CFrame.new(-2159.362793, 28.429836, -2195.492188, -0.539349318, 0.463938832, -0.702753901, 0.000000000, 0.834543169, 0.550942540, 0.842082083, 0.297150493, -0.450110286),
+                    CFrame.new(-2149.781982, 20.918791, -2189.355713, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    13.633197,
+                    0.500,
+                    40.000
+                ),
+                makeData(
+                    Vector3.new(-2138.045, 19.419, -2164.942),
+                    CFrame.new(-2148.999268, 28.747896, -2162.804688, 0.191505298, 0.563643515, -0.803512037, 0.000000000, 0.818664193, 0.574272454, 0.981491506, -0.109976217, 0.156778544),
+                    CFrame.new(-2138.044922, 20.918791, -2164.942139, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    13.633095,
+                    0.500,
+                    40.000
+                ),
+                makeData(
+                    Vector3.new(-2123.563, 19.419, -2201.450),
+                    CFrame.new(-2117.015381, 29.121317, -2192.749023, 0.799048662, -0.361759901, 0.480261505, 0.000000000, 0.798749983, 0.601663232, -0.601266444, -0.480758190, 0.638240039),
+                    CFrame.new(-2123.562744, 20.918791, -2201.450195, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    13.633040,
+                    0.500,
+                    40.000
+                )
+            }
+        },
+        {
+            Label = "1.75B HP",
+            Cycle = {
+                makeData(
+                    Vector3.new(-2129.188, 19.419, -2136.672),
+                    CFrame.new(-2123.617920, 28.105829, -2146.830078, -0.876816213, -0.253479838, 0.408584446, 0.000000000, 0.849756002, 0.527176261, -0.480825603, 0.462236702, -0.745079875),
+                    CFrame.new(-2129.188232, 20.918791, -2136.672363, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    13.633087,
+                    0.500,
+                    40.000
+                ),
+                makeData(
+                    Vector3.new(-2152.717, 19.419, -2112.046),
+                    CFrame.new(-2154.056885, 30.346006, -2129.067383, -0.996916413, 0.037928555, -0.068695322, 0.000000000, 0.875428498, 0.483347863, 0.078470513, 0.481857419, -0.872729063),
+                    CFrame.new(-2152.717041, 20.918791, -2112.045654, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    40.000021,
+                    0.500,
+                    40.000
+                ),
+                makeData(
+                    Vector3.new(-2145.851, 19.419, -2058.127),
+                    CFrame.new(-2150.084473, 33.681152, -2072.255127, -0.957919359, 0.187821642, -0.217056185, 0.000000000, 0.756195247, 0.654345989, 0.287037194, 0.626810670, -0.724374175),
+                    CFrame.new(-2145.851074, 20.918791, -2058.126953, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    19.503969,
+                    0.500,
+                    40.000
+                )
+            }
+        },
+        {
+            Label = "15B HP",
+            Cycle = {
+                makeData(
+                    Vector3.new(-2089.392, 19.419, -2162.511),
+                    CFrame.new(-2100.067627, 30.202538, -2156.944580, 0.462377846, 0.541447937, -0.702168763, 0.000000000, 0.791905105, 0.610644281, 0.886683047, -0.282348394, 0.366159350),
+                    CFrame.new(-2089.392334, 20.918791, -2162.511475, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    15.203294,
+                    0.500,
+                    40.000
+                ),
+                makeData(
+                    Vector3.new(-2115.548, 19.419, -2176.924),
+                    CFrame.new(-2111.564209, 31.123959, -2166.382568, 0.935439944, -0.237277672, 0.262014121, 0.000000000, 0.741229892, 0.671251297, -0.353485614, -0.627915263, 0.693376064),
+                    CFrame.new(-2115.547607, 20.918791, -2176.924072, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    15.203165,
+                    0.500,
+                    40.000
+                ),
+                makeData(
+                    Vector3.new(-2076.947, 19.419, -2202.903),
+                    CFrame.new(-2085.948730, 28.860523, -2193.573730, 0.719590187, 0.362734884, -0.592126191, 0.000000000, 0.852717519, 0.522372425, 0.694398999, -0.375894070, 0.613607168),
+                    CFrame.new(-2076.946533, 20.918791, -2202.902588, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    15.203232,
+                    0.500,
+                    40.000
+                )
+            }
+        },
+        {
+            Label = "120B HP",
+            Cycle = {
+                makeData(
+                    Vector3.new(-2107.324, 19.419, -2241.319),
+                    CFrame.new(-2111.750000, 27.842493, -2230.440918, 0.926269829, 0.191392824, -0.324642897, 0.000000000, 0.861439347, 0.507860482, 0.376861036, -0.470415831, 0.797925234),
+                    CFrame.new(-2107.324219, 20.918791, -2241.319092, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    13.633043,
+                    0.500,
+                    40.000
+                ),
+                makeData(
+                    Vector3.new(-2078.336, 19.419, -2248.928),
+                    CFrame.new(-2089.214111, 28.171133, -2245.062988, 0.334803939, 0.501265705, -0.797896743, 0.000000000, 0.846765399, 0.531966686, 0.942287803, -0.178104535, 0.283500403),
+                    CFrame.new(-2078.336426, 20.918789, -2248.927979, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    13.633000,
+                    0.500,
+                    40.000
+                ),
+                makeData(
+                    Vector3.new(-2098.147, 19.419, -2281.505),
+                    CFrame.new(-2094.572754, 28.684834, -2270.885010, 0.947764993, -0.181700021, 0.262157619, 0.000000000, 0.821889400, 0.569647074, -0.318969458, -0.539891541, 0.778958023),
+                    CFrame.new(-2098.146729, 20.918791, -2281.504639, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    13.633094,
+                    0.500,
+                    40.000
+                )
+            }
+        },
+        {
+            Label = "1T HP",
+            Cycle = {
+                makeData(
+                    Vector3.new(-2080.492, 19.419, -2047.783),
+                    CFrame.new(-2080.809814, 28.621496, -2059.027344, -0.999599993, 0.015979681, -0.023335664, 0.000000000, 0.825090170, 0.565001190, 0.028282562, 0.564775169, -0.824760079),
+                    CFrame.new(-2080.491699, 20.918791, -2047.783325, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    13.633079,
+                    0.500,
+                    40.000
+                ),
+                makeData(
+                    Vector3.new(-2110.653, 19.419, -2016.738),
+                    CFrame.new(-2108.893311, 29.121403, -2027.483887, -0.986857653, -0.097225048, 0.129070818, 0.000000000, 0.798744977, 0.601669788, -0.161592036, 0.593762457, -0.788247585),
+                    CFrame.new(-2110.652832, 20.918791, -2016.737671, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    13.633045,
+                    0.500,
+                    40.000
+                ),
+                makeData(
+                    Vector3.new(-2108.735, 19.419, -2066.310),
+                    CFrame.new(-2116.610840, 28.747992, -2074.218262, -0.708577931, 0.405230552, -0.577672660, 0.000000000, 0.818659306, 0.574279726, 0.705632687, 0.406921953, -0.580083787),
+                    CFrame.new(-2108.735352, 20.918791, -2066.309814, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    13.633166,
+                    0.500,
+                    40.000
+                )
+            }
+        },
+        {
+            Label = "15T HP",
+            Cycle = {
+                makeData(
+                    Vector3.new(-2117.660, 19.419, -2100.124),
+                    CFrame.new(-2120.635742, 27.709517, -2088.683350, 0.967800140, 0.125383437, -0.218270510, 0.000000000, 0.867115974, 0.498106539, 0.251720130, -0.482067585, 0.839194834),
+                    CFrame.new(-2117.660156, 20.918791, -2100.124268, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    13.633146,
+                    0.500,
+                    40.000
+                ),
+                makeData(
+                    Vector3.new(-2091.368, 19.419, -2129.343),
+                    CFrame.new(-2099.360352, 29.243811, -2122.085693, 0.672246516, 0.452079922, -0.586266637, 0.000000000, 0.791901827, 0.610648572, 0.740327477, -0.410506368, 0.532353163),
+                    CFrame.new(-2091.367676, 20.918791, -2129.343262, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    13.633089,
+                    0.500,
+                    40.000
+                ),
+                makeData(
+                    Vector3.new(-2086.756, 19.419, -2081.335),
+                    CFrame.new(-2083.765625, 28.365601, -2092.356445, -0.965111077, -0.143025547, 0.219326854, 0.000000000, 0.837634504, 0.546231031, -0.261840761, 0.527173638, -0.808410347),
+                    CFrame.new(-2086.755615, 20.918791, -2081.335205, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    13.633149,
+                    0.500,
+                    40.000
+                )
+            }
+        }
+    }
+
+    local function cycleEnemyTeleport(item)
+        local list = item and item.Cycle or nil
+        if type(list) ~= "table" or #list == 0 then
+            return
+        end
+        item.Index = (item.Index or 0) + 1
+        if item.Index > #list then
+            item.Index = 1
+        end
+        teleportWithData(list[item.Index])
+    end
+
+    createGrid(HalloweenEnemySection, HalloweenEnemyList, cycleEnemyTeleport)
 
     State.InitHalloween = function()
         local HalloweenAutomationSection = createSectionBox(State.Tabs.Halloween:GetPage(), "Automation")
@@ -10476,6 +11179,20 @@ do
             SpeedLabel = "Click Speed (sec)",
             CooldownKey = "HalloweenAutoBuy",
             DefaultCooldown = 0.6,
+            ResetMaxedOnPrompt = {
+                Match = "Flesh Has Been Consumed! Fleshify",
+                ShopKey = "Flesh",
+                OnReset = function()
+                    notify("Auto Buy Shop", "List item Flesh Shop tereset", 3)
+                end
+            },
+            ResetMaxedOnPopup = {
+                Match = "Refined CandyGain",
+                ShopKey = "Candy Corn",
+                OnReset = function()
+                    notify("Auto Buy Shop", "List item Candy Corn Shop tereset", 3)
+                end
+            },
             Shops = {
                 {
                     Key = "Flesh",
@@ -10492,7 +11209,57 @@ do
                         "Unlock Candy Corn",
                         "Candy Corn Multiplier III",
                         "Refined Candy Multiplier III",
-                        "Factorized Candy Multiplier V"
+                        "Factorized Candy Multiplier V",
+                        "Boss Damage Multiplier"
+                    }
+                },
+                {
+                    Key = "Candy Corn",
+                    DisplayName = "Candy Corn Shop",
+                    ShopName = "Candy Corn",
+                    Items = {
+                        "Candy Corn Multiplier",
+                        "Candy Corn Multiplier II",
+                        "Candy Cooldown",
+                        "Candy Cooldown II",
+                        "Candy Corn Capacity",
+                        "Candy Corn Zone Size",
+                        "Halloween Bulk II",
+                        "Halloween Luck II",
+                        "Flesh Multiplier III",
+                        "Candy Mutation Chance",
+                        "Refined Candy Multiplier IV",
+                        "Factorized Candy Multiplier IV"
+                    }
+                },
+                {
+                    Key = "Refined Candy",
+                    DisplayName = "Refined Candy Shop",
+                    ShopName = "Refined Candy",
+                    Items = {
+                        "Refined Candy Multiplier",
+                        "Refined Candy Multiplier II",
+                        "Candy Corn Multiplier IV",
+                        "Flesh Multiplier IV",
+                        "Halloween Bulk III",
+                        "Halloween Luck III",
+                        "Unlock Factorized Candy",
+                        "Factorized Candy Multiplier III"
+                    }
+                },
+                {
+                    Key = "Factorized Candy",
+                    DisplayName = "Factorized Candy Shop",
+                    ShopName = "Factorized Candy",
+                    Items = {
+                        "Factorized Candy Multiplier",
+                        "Factorized Candy Multiplier II",
+                        "Factorized Candy Capacity",
+                        "Factorized Candy Speed",
+                        "Factorized Candy Rate",
+                        "Refined Candy Multiplier V",
+                        "Candy Corn Multiplier V",
+                        "Unlock Soul Collapse"
                     }
                 }
             }
@@ -10824,12 +11591,395 @@ do
             15.203171,
             0.500,
             40.000
+        )},
+        {Label = "Christmas Rank", Data = makeData(
+            Vector3.new(-3992.259, 14.653, 4.077),
+            CFrame.new(-3993.103760, 22.842583, -12.366984, -0.998683393, 0.019310094, -0.047525570, 0.000000000, 0.926447392, 0.376424432, 0.051298730, 0.375928819, -0.925227523),
+            CFrame.new(-3992.259033, 16.152540, 4.076718, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+            70.000,
+            Enum.CameraType.Custom,
+            17.772608,
+            0.500,
+            40.000
+        )},
+        {Label = "Rune II", Data = makeData(
+            Vector3.new(-4013.487, 15.735, -30.656),
+            CFrame.new(-4012.548828, 30.235590, -18.574661, 0.996998250, -0.056637645, 0.052789222, 0.000000000, 0.681817174, 0.731522739, -0.077424310, -0.729326904, 0.679770529),
+            CFrame.new(-4013.487061, 17.234526, -30.655954, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+            70.000,
+            Enum.CameraType.Custom,
+            17.772608,
+            0.500,
+            40.000
         )}
     }
     registerRuneLocations("Christmas Event", ChristmasList)
     createGrid(ChristmasTeleportSection, ChristmasList, function(item)
         teleportWithData(item.Data)
     end)
+
+    local ChristmasCandySection = createSectionBox(State.Tabs.Christmas:GetPage(), "Collect")
+    local ChristmasCandyList = {
+        {
+            Label = "Collect Candy Canes",
+            Cycle = {
+                makeData(
+                    Vector3.new(-4031.825, 14.653, 65.365),
+                    CFrame.new(-4028.194580, 28.156456, 77.958466, 0.960873246, -0.187083170, 0.204261020, 0.000000000, 0.737434864, 0.675418377, -0.276988566, -0.648991466, 0.708581388),
+                    CFrame.new(-4031.824707, 16.152540, 65.365158, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    17.772541,
+                    10.180,
+                    17.773
+                ),
+                makeData(
+                    Vector3.new(-4001.091, 14.653, 68.966),
+                    CFrame.new(-4001.883057, 27.084419, 82.956070, 0.998402119, 0.034758434, -0.044554316, 0.000000000, 0.788450301, 0.615098596, 0.056508720, -0.614115715, 0.787190437),
+                    CFrame.new(-4001.091309, 16.152540, 68.965683, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    17.772556,
+                    10.180,
+                    17.773
+                ),
+                makeData(
+                    Vector3.new(-4011.665, 14.653, 48.927),
+                    CFrame.new(-4004.060059, 27.475483, 60.321297, 0.831754923, -0.353682905, 0.427892625, 0.000000000, 0.770779133, 0.637102425, -0.555142939, -0.529913068, 0.641099393),
+                    CFrame.new(-4011.664795, 16.152540, 48.927319, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    17.772556,
+                    10.180,
+                    17.773
+                ),
+                makeData(
+                    Vector3.new(-4040.258, 14.653, 45.532),
+                    CFrame.new(-4040.756348, 26.522381, 59.957531, 0.999403238, 0.020153644, -0.028051611, 0.000000000, 0.812131286, 0.583474696, 0.034540731, -0.583126485, 0.811646700),
+                    CFrame.new(-4040.257812, 16.152540, 45.532490, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    17.772562,
+                    10.180,
+                    17.773
+                ),
+                makeData(
+                    Vector3.new(-4010.129, 14.653, 24.989),
+                    CFrame.new(-4009.638184, 30.375954, 35.634495, 0.998938084, -0.036870386, 0.027623810, 0.000000000, 0.599597216, 0.800301850, -0.046070602, -0.799452007, 0.598960638),
+                    CFrame.new(-4010.129150, 16.152540, 24.989429, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    17.772562,
+                    10.180,
+                    17.773
+                ),
+                makeData(
+                    Vector3.new(-4039.729, 14.653, 16.448),
+                    CFrame.new(-4035.242920, 28.593372, 28.321060, 0.935440540, -0.247439668, 0.252437383, 0.000000000, 0.714140713, 0.700002253, -0.353484094, -0.654810488, 0.668036163),
+                    CFrame.new(-4039.729492, 16.152540, 16.448345, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    17.772591,
+                    10.180,
+                    17.773
+                ),
+                makeData(
+                    Vector3.new(-4035.685, 14.653, 6.067),
+                    CFrame.new(-4030.241211, 29.423866, 16.559952, 0.887650132, -0.343883485, 0.306302845, 0.000000000, 0.665126085, 0.746731102, -0.460518509, -0.662835956, 0.590399206),
+                    CFrame.new(-4035.685059, 16.152540, 6.067046, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    17.772581,
+                    10.180,
+                    17.773
+                ),
+                makeData(
+                    Vector3.new(-4056.601, 14.653, -4.432),
+                    CFrame.new(-4059.952393, 29.289581, 7.059162, 0.960003674, 0.206959650, -0.188575044, 0.000000000, 0.673513055, 0.739175379, 0.279987216, -0.709611058, 0.646575034),
+                    CFrame.new(-4056.600830, 16.152540, -4.432133, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    17.772583,
+                    10.180,
+                    17.773
+                ),
+                makeData(
+                    Vector3.new(-4064.906, 14.653, -36.179),
+                    CFrame.new(-4067.577637, 29.622126, -24.896538, 0.973100781, 0.174601600, -0.150296554, 0.000000000, 0.652386427, 0.757886529, 0.230379611, -0.737499952, 0.634837866),
+                    CFrame.new(-4064.906494, 16.152540, -36.179234, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    17.772562,
+                    10.180,
+                    17.773
+                ),
+                makeData(
+                    Vector3.new(-4036.726, 14.653, -35.155),
+                    CFrame.new(-4042.585938, 31.684830, -28.809164, 0.734684765, 0.592893660, -0.329720199, 0.000000000, 0.486020029, 0.873947680, 0.678408623, -0.642076075, 0.357071519),
+                    CFrame.new(-4036.726074, 16.152540, -35.155239, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    17.772526,
+                    10.180,
+                    17.773
+                ),
+                makeData(
+                    Vector3.new(-4047.565, 14.653, -51.404),
+                    CFrame.new(-4052.677246, 32.190868, -45.702938, 0.744551420, 0.602424681, -0.287624538, 0.000000000, 0.430856168, 0.902420700, 0.667565227, -0.671898603, 0.320794523),
+                    CFrame.new(-4047.565430, 16.152540, -51.404278, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    17.772560,
+                    10.180,
+                    17.773
+                ),
+                makeData(
+                    Vector3.new(-4000.335, 14.653, -33.634),
+                    CFrame.new(-3990.058105, 29.356964, -27.643087, 0.503614128, -0.641870439, 0.578251898, 0.000000000, 0.669328272, 0.742966890, -0.863928735, -0.374168634, 0.337083161),
+                    CFrame.new(-4000.335205, 16.152540, -33.633919, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    17.772610,
+                    10.180,
+                    17.773
+                ),
+                makeData(
+                    Vector3.new(-4017.158, 14.653, -72.661),
+                    CFrame.new(-4022.586182, 27.552710, -60.153946, 0.917342246, 0.255360097, -0.305408776, 0.000000000, 0.767166853, 0.641447723, 0.398099601, -0.588427067, 0.703754485),
+                    CFrame.new(-4017.158203, 16.152540, -72.661469, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    17.772589,
+                    10.180,
+                    17.773
+                ),
+                makeData(
+                    Vector3.new(-4029.287, 14.653, -97.151),
+                    CFrame.new(-4020.857178, 28.007839, -86.939674, 0.771173835, -0.424664378, 0.474290043, 0.000000000, 0.745007396, 0.667056203, -0.636624575, -0.514416277, 0.574530244),
+                    CFrame.new(-4029.286621, 16.152540, -97.150551, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    17.772610,
+                    10.180,
+                    17.773
+                ),
+                makeData(
+                    Vector3.new(-4047.995, 14.653, -90.113),
+                    CFrame.new(-4039.268311, 28.664879, -80.994270, 0.722477794, -0.486759186, 0.491010666, 0.000000000, 0.710174739, 0.704025567, -0.691394210, -0.508642852, 0.513085425),
+                    CFrame.new(-4047.994873, 16.152540, -90.113113, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    17.772585,
+                    10.180,
+                    17.773
+                ),
+                makeData(
+                    Vector3.new(-4055.165, 14.653, -116.768),
+                    CFrame.new(-4049.664062, 29.289635, -106.137321, 0.888131797, -0.339718133, 0.309537590, 0.000000000, 0.673509777, 0.739178360, -0.459588856, -0.656487823, 0.598165452),
+                    CFrame.new(-4055.165283, 16.152540, -116.768257, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    17.772549,
+                    10.180,
+                    17.773
+                ),
+                makeData(
+                    Vector3.new(-4039.300, 14.653, -133.587),
+                    CFrame.new(-4046.116699, 29.423922, -123.930038, 0.816949308, 0.430648625, -0.383582443, 0.000000000, 0.665122509, 0.746734262, 0.576709330, -0.610044062, 0.543371499),
+                    CFrame.new(-4039.299561, 16.152540, -133.587143, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    17.772524,
+                    10.180,
+                    17.773
+                ),
+                makeData(
+                    Vector3.new(-4008.620, 14.653, -124.782),
+                    CFrame.new(-4019.110107, 30.254818, -127.416946, -0.243605390, 0.769581795, -0.590254545, 0.000000000, 0.608588636, 0.793485999, 0.969874442, 0.193297461, -0.148255467),
+                    CFrame.new(-4008.619873, 16.152540, -124.782066, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    17.772503,
+                    10.180,
+                    17.773
+                ),
+                makeData(
+                    Vector3.new(-3983.567, 14.653, -118.750),
+                    CFrame.new(-3996.828369, 27.475578, -122.184448, -0.250708342, 0.616760254, -0.746158302, 0.000000000, 0.770774722, 0.637107790, 0.968062639, 0.159728244, -0.193239659),
+                    CFrame.new(-3983.567139, 16.152540, -118.750084, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    17.772627,
+                    10.180,
+                    17.773
+                ),
+                makeData(
+                    Vector3.new(-3986.992, 14.653, -101.864),
+                    CFrame.new(-3993.521973, 29.289637, -111.896065, -0.838094354, 0.403240561, -0.367416441, 0.000000000, 0.673509479, 0.739178538, 0.545525253, 0.619501352, -0.564464509),
+                    CFrame.new(-3986.991943, 16.152540, -101.864082, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    17.772598,
+                    10.180,
+                    17.773
+                ),
+                makeData(
+                    Vector3.new(-3963.206, 14.653, -80.784),
+                    CFrame.new(-3974.367432, 27.084522, -89.256180, -0.604591131, 0.489952773, -0.628025413, 0.000000000, 0.788445771, 0.615104377, 0.796535969, 0.371886641, -0.476687312),
+                    CFrame.new(-3963.205811, 16.152540, -80.784225, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    17.772564,
+                    10.180,
+                    17.773
+                ),
+                makeData(
+                    Vector3.new(-3953.385, 14.653, -53.208),
+                    CFrame.new(-3959.485352, 25.091934, -67.305771, -0.917750657, 0.199765518, -0.343260229, 0.000000000, 0.864293158, 0.502988517, 0.397157222, 0.461618036, -0.793205500),
+                    CFrame.new(-3953.384766, 16.152540, -53.208473, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    17.772554,
+                    10.180,
+                    17.773
+                ),
+                makeData(
+                    Vector3.new(-3928.476, 14.653, -39.384),
+                    CFrame.new(-3931.368896, 30.612972, -49.302696, -0.959998071, 0.227823988, -0.162787959, 0.000000000, 0.581371903, 0.813637972, 0.280006588, 0.781090856, -0.558115900),
+                    CFrame.new(-3928.475830, 16.152540, -39.383545, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    17.772549,
+                    10.180,
+                    17.773
+                ),
+                makeData(
+                    Vector3.new(-3929.909, 14.653, -4.433),
+                    CFrame.new(-3918.013672, 29.357002, -4.520770, -0.007341229, -0.742948949, 0.669307768, 0.000000000, 0.669325769, 0.742969036, -0.999972999, 0.005454306, -0.004913675),
+                    CFrame.new(-3929.908936, 16.152540, -4.433441, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    17.772528,
+                    10.180,
+                    17.773
+                ),
+                makeData(
+                    Vector3.new(-3950.419, 14.653, 18.397),
+                    CFrame.new(-3948.209473, 28.806583, 6.114761, -0.984197557, -0.126076490, 0.124337971, 0.000000000, 0.702180743, 0.711998761, -0.177074030, 0.700747430, -0.691084564),
+                    CFrame.new(-3950.419189, 16.152540, 18.397104, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    17.772551,
+                    10.180,
+                    17.773
+                ),
+                makeData(
+                    Vector3.new(-3969.674, 14.653, 13.616),
+                    CFrame.new(-3955.036377, 25.606949, 17.113464, 0.232416436, -0.517399311, 0.823578000, 0.000000000, 0.846765518, 0.531966507, -0.972616374, -0.123637758, 0.196802229),
+                    CFrame.new(-3969.673584, 16.152540, 13.615784, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    17.772659,
+                    10.180,
+                    17.773
+                ),
+                makeData(
+                    Vector3.new(-4066.687, 14.653, 45.234),
+                    CFrame.new(-4058.164795, 28.876846, 54.252510, 0.726807237, -0.491745800, 0.479518026, 0.000000000, 0.698149443, 0.715952218, -0.686841667, -0.520359278, 0.507419944),
+                    CFrame.new(-4066.687012, 16.152540, 45.234360, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    17.772539,
+                    10.180,
+                    17.773
+                ),
+                makeData(
+                    Vector3.new(-4078.425, 14.653, 45.731),
+                    CFrame.new(-4069.902832, 28.876846, 54.749313, 0.726807237, -0.491745800, 0.479518026, 0.000000000, 0.698149443, 0.715952218, -0.686841667, -0.520359278, 0.507419944),
+                    CFrame.new(-4078.425049, 16.152540, 45.731159, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    17.772541,
+                    10.180,
+                    17.773
+                ),
+                makeData(
+                    Vector3.new(-4107.604, 14.653, 6.567),
+                    CFrame.new(-4103.614258, 32.672401, 11.766813, 0.793346763, -0.565860629, 0.224505201, 0.000000000, 0.368784934, 0.929514825, -0.608769894, -0.737427592, 0.292574376),
+                    CFrame.new(-4107.604492, 16.152540, 6.567017, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    17.772610,
+                    10.180,
+                    17.773
+                ),
+                makeData(
+                    Vector3.new(-4085.765, 14.653, 2.478),
+                    CFrame.new(-4092.156250, 28.007896, 14.074261, 0.875806749, 0.321964085, -0.359585226, 0.000000000, 0.745004475, 0.667059422, 0.482661784, -0.584215164, 0.652480006),
+                    CFrame.new(-4085.765381, 16.152540, 2.478019, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    17.772604,
+                    10.180,
+                    17.773
+                ),
+                makeData(
+                    Vector3.new(-4115.053, 14.653, -13.229),
+                    CFrame.new(-4107.369629, 28.664932, -3.215404, 0.793347061, -0.428591341, 0.432330936, 0.000000000, 0.710171580, 0.704028666, -0.608769715, -0.558539093, 0.563412488),
+                    CFrame.new(-4115.053223, 16.152540, -13.228687, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    17.772547,
+                    10.180,
+                    17.773
+                ),
+                makeData(
+                    Vector3.new(-4103.417, 14.653, -31.872),
+                    CFrame.new(-4110.179199, 28.449429, -20.966389, 0.849898279, 0.364595979, -0.380450577, 0.000000000, 0.721990526, 0.691902936, 0.526946723, -0.588047087, 0.613618553),
+                    CFrame.new(-4103.417480, 16.152540, -31.871964, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    17.772615,
+                    10.180,
+                    17.773
+                ),
+                makeData(
+                    Vector3.new(-4121.744, 14.653, -39.508),
+                    CFrame.new(-4131.856445, 27.629553, -30.459530, 0.666800499, 0.481252283, -0.569010854, 0.000000000, 0.763530791, 0.645771444, 0.745236218, -0.430600733, 0.509122729),
+                    CFrame.new(-4121.743652, 16.152540, -39.507946, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    17.772570,
+                    10.180,
+                    17.773
+                ),
+                makeData(
+                    Vector3.new(-4103.093, 14.653, -59.913),
+                    CFrame.new(-4113.999512, 25.091995, -49.096737, 0.704146147, 0.357152015, -0.613694310, 0.000000000, 0.864291191, 0.502991974, 0.710055113, -0.354179859, 0.608587265),
+                    CFrame.new(-4103.092773, 16.152540, -59.912891, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    17.772449,
+                    10.180,
+                    17.773
+                )
+            }
+        }
+    }
+
+    local function cycleChristmasCandyTeleport(item)
+        local list = item and item.Cycle or nil
+        if type(list) ~= "table" or #list == 0 then
+            return
+        end
+        item.Index = (item.Index or 0) + 1
+        if item.Index > #list then
+            item.Index = 1
+        end
+        teleportWithData(list[item.Index])
+    end
+
+    createGrid(ChristmasCandySection, ChristmasCandyList, cycleChristmasCandyTeleport)
 
     State.InitChristmas = function()
         local ChristmasAutomationSection = createSectionBox(State.Tabs.Christmas:GetPage(), "Automation")
@@ -10841,6 +11991,13 @@ do
             SpeedLabel = "Click Speed (sec)",
             CooldownKey = "ChristmasAutoBuy",
             DefaultCooldown = 0.6,
+            ResetMaxedOnPopup = {
+                Match = "Successfully Reached Christmas Rank",
+                ShopKey = "Candy Cane",
+                OnReset = function()
+                    notify("Auto Buy Shop", "List item Candy Cane Shop tereset", 3)
+                end
+            },
             Shops = {
                 {
                     Key = "Candy Cane",
@@ -10848,8 +12005,8 @@ do
                     ShopName = "Candy Cane",
                     Items = {
                         "Candy Cane Multiplier",
-                        "Mini Candy Cane Multipier",
-                        "Infinite Candy Cane",
+                        "Mini Candy Cane Multiplier",
+                        "Infinity Candy Cane",
                         "Free Christmas Bulk",
                         "Christmas Luck",
                         "Christmas Bulk",
