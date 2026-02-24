@@ -1,5 +1,5 @@
 -- =====================================================
--- UI Garden Incremental V1.0.57
+-- UI Garden Incremental V1.0.88
 -- =====================================================
 -- [WORK RULES]
 -- 1. Fitur baru: jangan tambah local di top-level; bungkus di fungsi/table (hindari limit 200).
@@ -43,7 +43,7 @@ local State = {
     RemoteHookConn = nil
 }
 
-State.Version = "V1.0.57"
+State.Version = "V1.0.88"
 State.ValidateVersion = function(labelText)
     if type(labelText) ~= "string" then
         return false
@@ -151,6 +151,20 @@ local function cleanupAll()
         State.HellStarterTeleportToken = State.HellStarterTeleportToken + 1
     end
     State.HellStarterTeleportRunning = false
+    State.HellStarterTeleportHoldStart = nil
+    State.HellStarterTeleportHoldSeconds = nil
+
+    if State.HellMiddleTeleportToken then
+        State.HellMiddleTeleportToken = State.HellMiddleTeleportToken + 1
+    end
+    State.HellMiddleTeleportRunning = false
+    State.HellMiddleTeleportHoldStart = nil
+    State.HellMiddleTeleportHoldSeconds = nil
+
+    if State.HellAdvancedTeleportToken then
+        State.HellAdvancedTeleportToken = State.HellAdvancedTeleportToken + 1
+    end
+    State.HellAdvancedTeleportRunning = false
 
     if ENV and ENV[GLOBAL_KEY] then
         ENV[GLOBAL_KEY] = nil
@@ -298,15 +312,21 @@ local Config = {
     WindowWidth = 640,
     WindowHeight = 430,
     HellStarterEnabled = false,
-    HellStarterUseUpgradeAll = true,
-    HellStarterSkipMaxed = true,
     HellStarterSkipMaxedDropper = true,
-    HellStarterClickSpeed = 0.6,
-    HellStarterTeleportEnabled = false,
+    HellStarterTeleportLogicEnabled = true,
     HellStarterTeleportHold = 15,
     HellStarterTeleportStep = 3,
-    HellStarterItems = {},
     HellStarterDroppers = {},
+    HellMiddleEnabled = false,
+    HellMiddleSkipMaxedDropper = true,
+    HellMiddleTeleportLogicEnabled = true,
+    HellMiddleTeleportHold = 15,
+    HellMiddleTeleportStep = 3,
+    HellMiddleDroppers = {},
+    HellAdvancedEnabled = false,
+    HellAdvancedSkipMaxedDropper = true,
+    HellAdvancedTeleportStep = 3,
+    HellAdvancedDroppers = {},
     AutoReloadEnabled = false,
     AutoReloadSource = "",
     AutoReloadUrl = "",
@@ -314,7 +334,8 @@ local Config = {
     SectionStates = {},
     AutoBuyGroups = {},
     AutoBuyLogEnabled = false,
-    FullAutomationLogEnabled = false
+    FullAutomationLogEnabled = false,
+    AutoBuyClickSpeed = 0.6
 }
 
 local MINIMIZE_ICON_URL = "https://img.icons8.com/liquid-glass/96/hacking.png"
@@ -378,6 +399,9 @@ end
 if type(Config.AutoBuyGroups) ~= "table" then
     Config.AutoBuyGroups = {}
 end
+if type(Config.AutoBuyClickSpeed) ~= "number" then
+    Config.AutoBuyClickSpeed = 0.6
+end
 
 if Config.FirstRun then
     Config.NoFog = false
@@ -387,6 +411,8 @@ if Config.FirstRun then
     Config.FirstRun = false
     saveConfig()
 end
+
+setGlobalClickCooldown("AutoBuyGlobal", Config.AutoBuyClickSpeed)
 
 -- =====================================================
 -- AUTO RELOAD ON TELEPORT/RECONNECT
@@ -650,6 +676,41 @@ State.Fonts.Families = State.Fonts.Families or {
         Regular = Enum.Font.Code,
         Semibold = Enum.Font.Code,
         Medium = Enum.Font.Code
+    },
+    Roboto = {
+        Regular = Enum.Font.Roboto,
+        Semibold = Enum.Font.Roboto,
+        Medium = Enum.Font.Roboto
+    },
+    RobotoMono = {
+        Regular = Enum.Font.RobotoMono,
+        Semibold = Enum.Font.RobotoMono,
+        Medium = Enum.Font.RobotoMono
+    },
+    Montserrat = {
+        Regular = Enum.Font.Montserrat,
+        Semibold = Enum.Font.Montserrat,
+        Medium = Enum.Font.Montserrat
+    },
+    Oswald = {
+        Regular = Enum.Font.Oswald,
+        Semibold = Enum.Font.Oswald,
+        Medium = Enum.Font.Oswald
+    },
+    TitilliumWeb = {
+        Regular = Enum.Font.TitilliumWeb,
+        Semibold = Enum.Font.TitilliumWeb,
+        Medium = Enum.Font.TitilliumWeb
+    },
+    Ubuntu = {
+        Regular = Enum.Font.Ubuntu,
+        Semibold = Enum.Font.Ubuntu,
+        Medium = Enum.Font.Ubuntu
+    },
+    Nunito = {
+        Regular = Enum.Font.Nunito,
+        Semibold = Enum.Font.Nunito,
+        Medium = Enum.Font.Nunito
     }
 }
 
@@ -870,6 +931,12 @@ trackConnection(RunService.RenderStepped:Connect(function()
         if LoadingUI.Scale then
             LoadingUI.Scale.Scale = newScale
         end
+        if State.GridTextScaleApply then
+            State.GridTextScaleApply(newScale)
+        end
+        if State.LogTextScaleApply then
+            State.LogTextScaleApply(newScale)
+        end
     end
     if State.Layout then
         local cam = workspace.CurrentCamera
@@ -904,6 +971,33 @@ TitleBar.Parent = Main
 TitleBar.Active = true
 registerTheme(TitleBar, "TextColor3", "Text")
 
+local TitleBarPad = Instance.new("UIPadding")
+TitleBarPad.PaddingLeft = UDim.new(0, 4)
+TitleBarPad.Parent = TitleBar
+
+local FooterBar = Instance.new("Frame")
+FooterBar.Size = UDim2.new(1, 0, 0, 24)
+FooterBar.Position = UDim2.new(0, 0, 1, -24)
+FooterBar.BorderSizePixel = 0
+FooterBar.Parent = Main
+registerTheme(FooterBar, "BackgroundColor3", "Panel")
+
+local FooterPad = Instance.new("UIPadding")
+FooterPad.PaddingTop = UDim.new(0, 2)
+FooterPad.PaddingBottom = UDim.new(0, 2)
+FooterPad.Parent = FooterBar
+
+local FooterCredit = Instance.new("TextLabel")
+FooterCredit.Size = UDim2.new(1, -36, 1, 0)
+FooterCredit.Position = UDim2.new(0, 10, 0, 0)
+FooterCredit.BackgroundTransparency = 1
+FooterCredit.Font = Enum.Font.Gotham
+FooterCredit.TextSize = 12
+FooterCredit.TextXAlignment = Enum.TextXAlignment.Left
+FooterCredit.Text = "DC: daproduction.gg"
+FooterCredit.Parent = FooterBar
+registerTheme(FooterCredit, "TextColor3", "Muted")
+
 local VersionLabel = Instance.new("TextLabel")
 VersionLabel.Size = UDim2.new(0, 60, 0, 18)
 VersionLabel.Position = UDim2.new(1, -124, 0, 7)
@@ -913,6 +1007,7 @@ VersionLabel.TextSize = 12
 VersionLabel.TextXAlignment = Enum.TextXAlignment.Right
 VersionLabel.Text = State.Version
 VersionLabel.Parent = Main
+VersionLabel.Active = true
 registerTheme(VersionLabel, "TextColor3", "Muted")
 State.ValidateVersion(VersionLabel.Text)
 
@@ -1000,7 +1095,7 @@ end
 
 setMainAnchorTopRight()
 
-trackConnection(TitleBar.InputBegan:Connect(function(input)
+local function beginMainDrag(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
         Dragging = true
         DragMoved = false
@@ -1015,7 +1110,10 @@ trackConnection(TitleBar.InputBegan:Connect(function(input)
             end
         end)
     end
-end))
+end
+
+trackConnection(TitleBar.InputBegan:Connect(beginMainDrag))
+trackConnection(VersionLabel.InputBegan:Connect(beginMainDrag))
 
 trackConnection(MinimizedIcon.InputBegan:Connect(function(input)
     if not Minimized then
@@ -1048,7 +1146,7 @@ trackConnection(UIS.InputChanged:Connect(function(input)
 end))
 
 local Body = Instance.new("Frame")
-Body.Size = UDim2.new(1, 0, 1, -32)
+Body.Size = UDim2.new(1, 0, 1, -56)
 Body.Position = UDim2.new(0, 0, 0, 32)
 Body.BorderSizePixel = 0
 Body.Parent = Main
@@ -1056,28 +1154,44 @@ registerTheme(Body, "BackgroundColor3", "Panel")
 addCorner(Body, 8)
 
 local ResizeHandles = {}
-local function createResizeHandle(name, size, pos, cursor)
-    local h = Instance.new("Frame")
+local function createResizeHandle(name, size, pos)
+    local h = Instance.new("TextButton")
     h.Name = name
     h.Size = size
     h.Position = pos
-    h.BackgroundTransparency = 1
+    h.BackgroundTransparency = 0
     h.BorderSizePixel = 0
+    h.Text = ""
+    h.AutoButtonColor = false
     h.Parent = Main
     h.Active = true
-    h.ZIndex = 10
+    h.ZIndex = 20
+    registerTheme(h, "BackgroundColor3", "Main")
+    addCorner(h, 4)
+    addStroke(h, "Muted", 1, 0.6)
     ResizeHandles[#ResizeHandles + 1] = h
     return h
 end
 
-createResizeHandle("ResizeLeft", UDim2.new(0, 6, 1, -12), UDim2.new(0, -3, 0, 6))
-createResizeHandle("ResizeRight", UDim2.new(0, 6, 1, -12), UDim2.new(1, -3, 0, 6))
-createResizeHandle("ResizeTop", UDim2.new(1, -12, 0, 6), UDim2.new(0, 6, 0, -3))
-createResizeHandle("ResizeBottom", UDim2.new(1, -12, 0, 6), UDim2.new(0, 6, 1, -3))
-createResizeHandle("ResizeBottomRight", UDim2.new(0, 12, 0, 12), UDim2.new(1, -12, 1, -12))
-createResizeHandle("ResizeBottomLeft", UDim2.new(0, 12, 0, 12), UDim2.new(0, 0, 1, -12))
-createResizeHandle("ResizeTopRight", UDim2.new(0, 12, 0, 12), UDim2.new(1, -12, 0, 0))
-createResizeHandle("ResizeTopLeft", UDim2.new(0, 12, 0, 12), UDim2.new(0, 0, 0, 0))
+local ResizeBottomRight = createResizeHandle("ResizeBottomRight", UDim2.new(0, 16, 0, 16), UDim2.new(1, -20, 0.5, -8))
+ResizeBottomRight.Parent = FooterBar
+do
+    local function addGripLine(offset)
+        local line = Instance.new("Frame")
+        line.Size = UDim2.new(0, 7, 0, 2)
+        line.Position = UDim2.new(1, -2 - offset, 1, -5 - offset)
+        line.AnchorPoint = Vector2.new(1, 1)
+        line.BorderSizePixel = 0
+        line.BackgroundTransparency = 0
+        line.Parent = ResizeBottomRight
+        line.ZIndex = ResizeBottomRight.ZIndex + 1
+        registerTheme(line, "BackgroundColor3", "Muted")
+        line.Rotation = -45
+    end
+    addGripLine(0)
+    addGripLine(2)
+    addGripLine(4)
+end
 
 local SavedSize = Main.Size
 local SavedPos = Main.Position
@@ -1091,8 +1205,8 @@ State.MainLayout.Apply = State.MainLayout.Apply or function()
     else
         State.MainLayout.RelativePos = nil
     end
-    if State.Layout and State.Layout.ClampFrame then
-        State.Layout.ClampFrame(Main, 8, 8)
+    if State.Layout and State.Layout.ClampFrameSoft then
+        State.Layout.ClampFrameSoft(Main, 8, 8)
     end
     if not Minimized then
         SavedPos = Main.Position
@@ -1112,6 +1226,7 @@ local function setMinimized(state)
         Main.Position = SavedPos
         Body.Visible = false
         TitleBar.Visible = false
+        FooterBar.Visible = false
         VersionLabel.Visible = false
         AccentLine.Visible = false
         MinimizeBtn.Visible = false
@@ -1132,6 +1247,7 @@ local function setMinimized(state)
     else
         Body.Visible = true
         TitleBar.Visible = true
+        FooterBar.Visible = true
         VersionLabel.Visible = true
         AccentLine.Visible = true
         MinimizeBtn.Visible = true
@@ -1179,7 +1295,7 @@ local ResizeDir = nil
 local ResizeStartPos
 local ResizeStartSize
 local ResizeStartMainPos
-local MinSize = Vector2.new(520, 320)
+local MinSize = Vector2.new(450, 320)
 local ResizeClickCount = 0
 local ResizeClickTime = 0
 local ResizeClickHandle = nil
@@ -1247,13 +1363,6 @@ local function endResize()
 end
 
 local handleMap = {
-    ResizeLeft = "Left",
-    ResizeRight = "Right",
-    ResizeTop = "Top",
-    ResizeBottom = "Bottom",
-    ResizeTopLeft = "TopLeft",
-    ResizeTopRight = "TopRight",
-    ResizeBottomLeft = "BottomLeft",
     ResizeBottomRight = "BottomRight"
 }
 
@@ -1293,7 +1402,7 @@ trackConnection(UIS.InputEnded:Connect(function(input)
 end))
 
 local TabBar = Instance.new("ScrollingFrame")
-TabBar.Size = UDim2.new(0, 180, 1, 0)
+TabBar.Size = UDim2.new(0, 150, 1, 0)
 TabBar.BorderSizePixel = 0
 TabBar.Parent = Body
 TabBar.CanvasSize = UDim2.new(0, 0, 0, 0)
@@ -1321,8 +1430,8 @@ TabPadding.PaddingBottom = UDim.new(0, 8)
 TabPadding.Parent = TabBar
 
 local Pages = Instance.new("Frame")
-Pages.Size = UDim2.new(1, -180, 1, 0)
-Pages.Position = UDim2.new(0, 180, 0, 0)
+Pages.Size = UDim2.new(1, -150, 1, 0)
+Pages.Position = UDim2.new(0, 150, 0, 0)
 Pages.BorderSizePixel = 0
 Pages.Parent = Body
 registerTheme(Pages, "BackgroundColor3", "Panel")
@@ -1337,6 +1446,7 @@ local function createTabButton(text)
     btn.Font = Enum.Font.GothamSemibold
     btn.TextSize = 13
     btn.Text = text
+    btn.TextXAlignment = Enum.TextXAlignment.Left
     btn.AutoButtonColor = false
     btn.Parent = TabBar
     registerTheme(btn, "BackgroundColor3", "Main")
@@ -1348,7 +1458,7 @@ local function createTabButton(text)
     local indicator = Instance.new("Frame")
     indicator.Name = "ActiveIndicator"
     indicator.Size = UDim2.new(0, 3, 1, -10)
-    indicator.Position = UDim2.new(0, 4, 0, 5)
+    indicator.Position = UDim2.new(0, -10, 0, 5)
     indicator.BorderSizePixel = 0
     indicator.Parent = btn
     indicator.Visible = false
@@ -2132,8 +2242,48 @@ State.Layout.ClampFrame = State.Layout.ClampFrame or function(frame, marginX, ma
     frame.Position = UDim2.new(0, newX + w * anchor.X, 0, newY + h * anchor.Y)
 end
 
+State.Layout.ClampFrameSoft = State.Layout.ClampFrameSoft or function(frame, marginX, marginY)
+    if not frame or not frame.Parent then
+        return
+    end
+    local viewport = State.Layout.GetViewport and State.Layout.GetViewport() or Vector2.new(0, 0)
+    if viewport.X <= 0 or viewport.Y <= 0 then
+        return
+    end
+    local inset = State.Layout.GetInset and State.Layout.GetInset() or Vector2.new(0, 0)
+    local absSize = frame.AbsoluteSize
+    local w = (absSize and absSize.X and absSize.X > 0) and absSize.X or (frame.Size.X.Offset or 0)
+    local h = (absSize and absSize.Y and absSize.Y > 0) and absSize.Y or (frame.Size.Y.Offset or 0)
+    local absPos = frame.AbsolutePosition or Vector2.new(0, 0)
+    local x = absPos.X or 0
+    local y = absPos.Y or 0
+    local mx = marginX or 0
+    local my = marginY or 0
+    local minX = inset.X
+    local minY = inset.Y
+    local maxX = viewport.X - w
+    local maxY = viewport.Y - h
+    local newX = x
+    local newY = y
+
+    if x < (minX - mx) then
+        newX = minX
+    elseif x > (maxX + mx) then
+        newX = maxX
+    end
+
+    if y < (minY - my) then
+        newY = minY
+    elseif y > (maxY + my) then
+        newY = maxY
+    end
+
+    local anchor = frame.AnchorPoint or Vector2.new(0, 0)
+    frame.Position = UDim2.new(0, newX + w * anchor.X, 0, newY + h * anchor.Y)
+end
+
 State.LogLayout = State.LogLayout or {}
-State.LogLayout.Width = State.LogLayout.Width or 280
+State.LogLayout.Width = State.LogLayout.Width or 200
 State.LogLayout.MarginX = State.LogLayout.MarginX or 12
 State.LogLayout.MarginY = State.LogLayout.MarginY or State.LogLayout.MarginX
 State.LogLayout.Gap = State.LogLayout.Gap or 8
@@ -2295,7 +2445,7 @@ local function createAutoBuyLogUI()
     end
 
     local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(0, 280, 0, 220)
+    frame.Size = UDim2.new(0, 200, 0, 300)
     frame.AnchorPoint = Vector2.new(0, 0)
     frame.Position = UDim2.new(0, 40, 0, 40)
     frame.BorderSizePixel = 0
@@ -2322,7 +2472,7 @@ local function createAutoBuyLogUI()
 
     local countLabel = Instance.new("TextLabel")
     countLabel.Size = UDim2.new(0, 40, 0, 18)
-    countLabel.Position = UDim2.new(1, -100, 0, 4)
+    countLabel.Position = UDim2.new(1, -80, 0, 4)
     countLabel.BackgroundTransparency = 1
     countLabel.Font = Enum.Font.Gotham
     countLabel.TextSize = 12
@@ -2352,8 +2502,8 @@ local function createAutoBuyLogUI()
     registerTheme(line, "BackgroundColor3", "Accent")
 
     local content = Instance.new("ScrollingFrame")
-    content.Size = UDim2.new(1, -16, 1, -36)
-    content.Position = UDim2.new(0, 8, 0, 32)
+    content.Size = UDim2.new(1, 0, 1, -36)
+    content.Position = UDim2.new(0, 0, 0, 32)
     content.BorderSizePixel = 0
     content.BackgroundTransparency = 1
     content.ScrollBarThickness = 4
@@ -2369,8 +2519,8 @@ local function createAutoBuyLogUI()
     local pad = Instance.new("UIPadding")
     pad.PaddingTop = UDim.new(0, 4)
     pad.PaddingBottom = UDim.new(0, 4)
-    pad.PaddingLeft = UDim.new(0, 2)
-    pad.PaddingRight = UDim.new(0, 2)
+    pad.PaddingLeft = UDim.new(0, 8)
+    pad.PaddingRight = UDim.new(0, 8)
     pad.Parent = content
 
     list:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
@@ -2461,59 +2611,64 @@ local function rebuildAutoBuyLogContent()
         local itemEnabled = data.ItemEnabled or {}
 
         local section = Instance.new("Frame")
-        section.Size = UDim2.new(1, 0, 0, 150)
+        section.Size = UDim2.new(1, 0, 0, 0)
+        section.AutomaticSize = Enum.AutomaticSize.Y
         section.BorderSizePixel = 0
         section.Parent = AutoBuyLogState.Content
         registerTheme(section, "BackgroundColor3", "Panel")
         addCorner(section, 8)
         addStroke(section, "Muted", 1, 0.8)
 
-        local header = Instance.new("TextLabel")
-        header.Size = UDim2.new(1, -10, 0, 22)
-        header.Position = UDim2.new(0, 8, 0, 4)
-        header.BackgroundTransparency = 1
-        header.Font = Enum.Font.GothamSemibold
-        header.TextSize = 12
-        header.TextXAlignment = Enum.TextXAlignment.Left
-        local headerText = tostring(info.Name or "AutoBuy")
-        if info.Name == "Auto Buy Shop" and info.Key then
-            headerText = headerText .. " (" .. tostring(info.Key) .. ")"
-        end
-        header.Text = headerText
-        header.Parent = section
-        registerTheme(header, "TextColor3", "Text")
+    local header = Instance.new("TextLabel")
+    header.Size = UDim2.new(1, 0, 0, 22)
+    header.BackgroundTransparency = 1
+    header.Font = Enum.Font.GothamSemibold
+    header.TextSize = 12
+    header.TextXAlignment = Enum.TextXAlignment.Left
+    local headerText = tostring(info.Name or "AutoBuy")
+    if info.Name == "Auto Buy Shop" and info.Key then
+        headerText = tostring(info.Key)
+    end
+    header.Text = headerText
+    header.Parent = section
+    registerTheme(header, "TextColor3", "Text")
 
-        local scroll = Instance.new("ScrollingFrame")
-        scroll.Size = UDim2.new(1, -12, 1, -30)
-        scroll.Position = UDim2.new(0, 6, 0, 28)
-        scroll.BorderSizePixel = 0
-        scroll.BackgroundTransparency = 1
-        scroll.ScrollBarThickness = 4
-        scroll.ScrollingDirection = Enum.ScrollingDirection.Y
-        scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
-        scroll.Parent = section
+        local body = Instance.new("Frame")
+        body.Size = UDim2.new(1, 0, 0, 0)
+        body.AutomaticSize = Enum.AutomaticSize.Y
+        body.BorderSizePixel = 0
+        body.BackgroundTransparency = 1
+        body.Parent = section
 
         local list = Instance.new("UIListLayout")
         list.Padding = UDim.new(0, 4)
         list.SortOrder = Enum.SortOrder.LayoutOrder
-        list.Parent = scroll
+        list.Parent = body
 
         local pad = Instance.new("UIPadding")
         pad.PaddingTop = UDim.new(0, 2)
         pad.PaddingBottom = UDim.new(0, 4)
         pad.PaddingLeft = UDim.new(0, 2)
         pad.PaddingRight = UDim.new(0, 2)
-        pad.Parent = scroll
-
-        list:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
-            scroll.CanvasSize = UDim2.new(0, 0, 0, list.AbsoluteContentSize.Y + 6)
-        end)
+        pad.Parent = body
 
         AutoBuyLogState.GroupUI[groupKey] = {
             Frame = section,
-            Scroll = scroll,
+            Scroll = body,
             Rows = {}
         }
+
+        local sectionList = Instance.new("UIListLayout")
+        sectionList.Padding = UDim.new(0, 6)
+        sectionList.SortOrder = Enum.SortOrder.LayoutOrder
+        sectionList.Parent = section
+
+        local sectionPad = Instance.new("UIPadding")
+        sectionPad.PaddingTop = UDim.new(0, 6)
+        sectionPad.PaddingBottom = UDim.new(0, 6)
+        sectionPad.PaddingLeft = UDim.new(0, 6)
+        sectionPad.PaddingRight = UDim.new(0, 6)
+        sectionPad.Parent = section
 
         local addedAny = false
         for _, shop in ipairs(shops) do
@@ -2526,7 +2681,7 @@ local function rebuildAutoBuyLogContent()
                 shopLabel.TextSize = 11
                 shopLabel.TextXAlignment = Enum.TextXAlignment.Left
                 shopLabel.Text = tostring(shop.DisplayName or shopKey or "Shop")
-                shopLabel.Parent = scroll
+                shopLabel.Parent = body
                 registerTheme(shopLabel, "TextColor3", "Muted")
 
                 AutoBuyLogState.GroupUI[groupKey].Rows[shopKey] = AutoBuyLogState.GroupUI[groupKey].Rows[shopKey] or {}
@@ -2536,7 +2691,7 @@ local function rebuildAutoBuyLogContent()
                         local row = Instance.new("Frame")
                         row.Size = UDim2.new(1, 0, 0, 22)
                         row.BorderSizePixel = 0
-                        row.Parent = scroll
+                        row.Parent = body
                         registerTheme(row, "BackgroundColor3", "Main")
                         addCorner(row, 6)
                         addStroke(row, "Muted", 1, 0.6)
@@ -2556,10 +2711,42 @@ local function rebuildAutoBuyLogContent()
                         label.BackgroundTransparency = 1
                         label.Font = Enum.Font.Gotham
                         label.TextSize = 11
+                        label.TextScaled = true
+                        label.TextWrapped = true
                         label.TextXAlignment = Enum.TextXAlignment.Left
                         label.Text = tostring(item)
                         label.Parent = row
                         registerTheme(label, "TextColor3", "Text")
+                        do
+                            State.LogTextConstraints = State.LogTextConstraints or {}
+                            State.LogTextScaleApply = State.LogTextScaleApply or function(scale)
+                                local s = tonumber(scale) or 1
+                                for _, entry in ipairs(State.LogTextConstraints) do
+                                    local clamp = entry.Clamp
+                                    if clamp and clamp.Parent then
+                                        local maxSize = math.max(6, math.floor(entry.BaseMax * s + 0.5))
+                                        local minSize = math.max(6, math.floor(entry.BaseMin * s + 0.5))
+                                        if maxSize < minSize then
+                                            minSize = maxSize
+                                        end
+                                        clamp.MaxTextSize = maxSize
+                                        clamp.MinTextSize = minSize
+                                    end
+                                end
+                            end
+                            local sizeClamp = Instance.new("UITextSizeConstraint")
+                            sizeClamp.MinTextSize = 8
+                            sizeClamp.MaxTextSize = 11
+                            sizeClamp.Parent = label
+                            State.LogTextConstraints[#State.LogTextConstraints + 1] = {
+                                Clamp = sizeClamp,
+                                BaseMin = sizeClamp.MinTextSize,
+                                BaseMax = sizeClamp.MaxTextSize
+                            }
+                            if State.LogTextScaleApply and MainScale then
+                                State.LogTextScaleApply(MainScale.Scale)
+                            end
+                        end
 
                         local skipped = AutoBuyLogState.SkippedMaxed[groupKey]
                             and AutoBuyLogState.SkippedMaxed[groupKey][shopKey]
@@ -2587,16 +2774,28 @@ local function rebuildAutoBuyLogContent()
             empty.TextSize = 11
             empty.TextXAlignment = Enum.TextXAlignment.Left
             empty.Text = "Tidak ada item aktif"
-            empty.Parent = scroll
+            empty.Parent = body
             registerTheme(empty, "TextColor3", "Muted")
         end
 
         if i < #groups then
+            local spacerTop = Instance.new("Frame")
+            spacerTop.Size = UDim2.new(1, 0, 0, 6)
+            spacerTop.BorderSizePixel = 0
+            spacerTop.BackgroundTransparency = 1
+            spacerTop.Parent = AutoBuyLogState.Content
+
             local div = Instance.new("Frame")
             div.Size = UDim2.new(1, 0, 0, 1)
             div.BorderSizePixel = 0
             div.Parent = AutoBuyLogState.Content
             registerTheme(div, "BackgroundColor3", "Muted")
+
+            local spacerBottom = Instance.new("Frame")
+            spacerBottom.Size = UDim2.new(1, 0, 0, 6)
+            spacerBottom.BorderSizePixel = 0
+            spacerBottom.BackgroundTransparency = 1
+            spacerBottom.Parent = AutoBuyLogState.Content
         end
     end
 
@@ -2650,6 +2849,92 @@ local function setAutoBuyGroupActive(groupKey, displayName, enabled, shops, shop
         AutoBuyLogState.SkippedMaxed[groupKey] = nil
     end
     updateAutoBuyLogUI()
+end
+
+State.AutoBuyScheduler = State.AutoBuyScheduler or {}
+State.AutoBuyScheduler.Active = State.AutoBuyScheduler.Active or {}
+State.AutoBuyScheduler.Order = State.AutoBuyScheduler.Order or {}
+State.AutoBuyScheduler.Index = State.AutoBuyScheduler.Index or 1
+State.AutoBuyScheduler.LastClick = State.AutoBuyScheduler.LastClick or 0
+State.AutoBuyScheduler.Conn = State.AutoBuyScheduler.Conn or nil
+
+local function autoBuySchedulerStart()
+    if State.AutoBuyScheduler.Conn then
+        return
+    end
+    State.AutoBuyScheduler.Conn = RunService.Heartbeat:Connect(function()
+        local order = State.AutoBuyScheduler.Order
+        local total = #order
+        if total == 0 then
+            return
+        end
+        local now = os.clock()
+        if now - State.AutoBuyScheduler.LastClick < getGlobalClickCooldown("AutoBuyGlobal") then
+            return
+        end
+        local startIndex = State.AutoBuyScheduler.Index
+        for _ = 1, total do
+            local key = order[State.AutoBuyScheduler.Index]
+            State.AutoBuyScheduler.Index += 1
+            if State.AutoBuyScheduler.Index > total then
+                State.AutoBuyScheduler.Index = 1
+            end
+            local entry = State.AutoBuyScheduler.Active[key]
+            if entry and entry.Step then
+                local fired = entry.Step()
+                if fired then
+                    State.AutoBuyScheduler.LastClick = now
+                    break
+                end
+            end
+        end
+        if #order ~= total and State.AutoBuyScheduler.Index > #order then
+            State.AutoBuyScheduler.Index = 1
+        end
+    end)
+    trackConnection(State.AutoBuyScheduler.Conn)
+end
+
+local function autoBuySchedulerStopIfEmpty()
+    if #State.AutoBuyScheduler.Order > 0 then
+        return
+    end
+    if State.AutoBuyScheduler.Conn then
+        State.AutoBuyScheduler.Conn:Disconnect()
+        State.AutoBuyScheduler.Conn = nil
+    end
+    State.AutoBuyScheduler.Index = 1
+end
+
+local function autoBuySchedulerRegister(key, entry)
+    if not key or not entry then
+        return
+    end
+    State.AutoBuyScheduler.Active[key] = entry
+    local found = false
+    for _, k in ipairs(State.AutoBuyScheduler.Order) do
+        if k == key then
+            found = true
+            break
+        end
+    end
+    if not found then
+        State.AutoBuyScheduler.Order[#State.AutoBuyScheduler.Order + 1] = key
+    end
+    autoBuySchedulerStart()
+end
+
+local function autoBuySchedulerUnregister(key)
+    if not key then
+        return
+    end
+    State.AutoBuyScheduler.Active[key] = nil
+    for i = #State.AutoBuyScheduler.Order, 1, -1 do
+        if State.AutoBuyScheduler.Order[i] == key then
+            table.remove(State.AutoBuyScheduler.Order, i)
+        end
+    end
+    autoBuySchedulerStopIfEmpty()
 end
 
 State.ResolveMaxedMatches = function(lowerMsg, items)
@@ -2880,7 +3165,7 @@ State.FullAutomationLog.CreateUI = function()
     end
 
     local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(0, 280, 0, 180)
+    frame.Size = UDim2.new(0, 200, 0, 180)
     frame.AnchorPoint = Vector2.new(0, 0)
     frame.Position = UDim2.new(0, 40, 0, 300)
     frame.BorderSizePixel = 0
@@ -2907,7 +3192,7 @@ State.FullAutomationLog.CreateUI = function()
 
     local countLabel = Instance.new("TextLabel")
     countLabel.Size = UDim2.new(0, 40, 0, 18)
-    countLabel.Position = UDim2.new(1, -100, 0, 4)
+    countLabel.Position = UDim2.new(1, -80, 0, 4)
     countLabel.BackgroundTransparency = 1
     countLabel.Font = Enum.Font.Gotham
     countLabel.TextSize = 12
@@ -2937,8 +3222,8 @@ State.FullAutomationLog.CreateUI = function()
     registerTheme(line, "BackgroundColor3", "Accent")
 
     local content = Instance.new("ScrollingFrame")
-    content.Size = UDim2.new(1, -16, 1, -36)
-    content.Position = UDim2.new(0, 8, 0, 32)
+    content.Size = UDim2.new(1, 0, 1, -36)
+    content.Position = UDim2.new(0, 0, 0, 32)
     content.BorderSizePixel = 0
     content.BackgroundTransparency = 1
     content.ScrollBarThickness = 4
@@ -2954,8 +3239,8 @@ State.FullAutomationLog.CreateUI = function()
     local pad = Instance.new("UIPadding")
     pad.PaddingTop = UDim.new(0, 4)
     pad.PaddingBottom = UDim.new(0, 4)
-    pad.PaddingLeft = UDim.new(0, 2)
-    pad.PaddingRight = UDim.new(0, 2)
+    pad.PaddingLeft = UDim.new(0, 8)
+    pad.PaddingRight = UDim.new(0, 8)
     pad.Parent = content
 
     list:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
@@ -3220,7 +3505,6 @@ local function setupAutoBuyGroup(section, opts)
 
     group.UseUpgradeAll = group.UseUpgradeAll ~= nil and group.UseUpgradeAll or true
     group.SkipMaxed = group.SkipMaxed ~= nil and group.SkipMaxed or true
-    group.ClickSpeed = tonumber(group.ClickSpeed) or (opts.DefaultCooldown or 0.6)
     group.Shops = group.Shops or {}
     group.Items = group.Items or {}
     group.Enabled = group.Enabled == true
@@ -3290,10 +3574,6 @@ local function setupAutoBuyGroup(section, opts)
     end
 
     local enabled = group.Enabled == true
-    local conn = nil
-    local accum = 0
-    local interval = opts.Interval or 0.25
-    local lastClick = 0
     local useUpgradeAll = group.UseUpgradeAll == true
     local skipMaxedEnabled = group.SkipMaxed == true
     local itemEnabled = group.Items
@@ -3303,8 +3583,6 @@ local function setupAutoBuyGroup(section, opts)
     local popupConn = nil
     local shopIndex = 1
     local itemIndex = {}
-
-    setGlobalClickCooldown(opts.CooldownKey or groupKey, group.ClickSpeed)
 
     local function getShopFireArgs(shop, itemName)
         if not shop or not itemName then
@@ -3500,10 +3778,6 @@ local function setupAutoBuyGroup(section, opts)
         setControlsEnabled(childControls, enabled)
         setAutoBuyGroupActive(groupKey, opts.DisplayName or groupKey, enabled, shops, shopEnabled, itemEnabled)
         if enabled then
-            if conn then
-                conn:Disconnect()
-            end
-            accum = 0
             shopIndex = 1
             itemIndex = {}
             maxed = {}
@@ -3512,10 +3786,11 @@ local function setupAutoBuyGroup(section, opts)
             end
             attachPromptListener()
             attachPopupListener()
-            conn = RunService.Heartbeat:Connect(function(dt)
-                accum += dt
-                if accum >= interval then
-                    accum = 0
+            autoBuySchedulerRegister(groupKey, {
+                Step = function()
+                    if not enabled then
+                        return false
+                    end
                     local remote = nil
                     if opts.GetRemote then
                         remote = opts.GetRemote()
@@ -3523,11 +3798,7 @@ local function setupAutoBuyGroup(section, opts)
                         remote = getMainRemote()
                     end
                     if not remote then
-                        return
-                    end
-                    local now = os.clock()
-                    if now - lastClick < getGlobalClickCooldown(opts.CooldownKey or groupKey) then
-                        return
+                        return false
                     end
                     local shop, itemName = getNextItem()
                     if shop and itemName then
@@ -3540,16 +3811,13 @@ local function setupAutoBuyGroup(section, opts)
                         if AutoBuyLogState.SetActiveItem then
                             AutoBuyLogState.SetActiveItem(groupKey, shop.Key, itemName)
                         end
-                        lastClick = now
+                        return true
                     end
+                    return false
                 end
-            end)
-            trackConnection(conn)
+            })
         else
-            if conn then
-                conn:Disconnect()
-                conn = nil
-            end
+            autoBuySchedulerUnregister(groupKey)
             detachPromptListener()
             detachPopupListener()
         end
@@ -3567,12 +3835,6 @@ local function setupAutoBuyGroup(section, opts)
         group.UseUpgradeAll = useUpgradeAll
         saveConfig()
     end))
-
-    addControl(createSlider(container, opts.SpeedLabel or "Click Speed (sec)", nil, 0.1, 5, group.ClickSpeed, function(v)
-        group.ClickSpeed = v
-        setGlobalClickCooldown(opts.CooldownKey or groupKey, v)
-        saveConfig()
-    end, 1))
 
     addControl(createToggle(container, "Skip Maxed Items", nil, skipMaxedEnabled, function(v)
         skipMaxedEnabled = v == true
@@ -4042,9 +4304,9 @@ confirmDialog = function(title, content, onConfirm)
     registerTheme(line, "BackgroundColor3", "Accent")
 
     local body = Instance.new("Frame")
-    body.Size = UDim2.new(1, -16, 0, 0)
+    body.Size = UDim2.new(1, 0, 0, 0)
     body.AutomaticSize = Enum.AutomaticSize.Y
-    body.Position = UDim2.new(0, 8, 0, 32)
+    body.Position = UDim2.new(0, 0, 0, 32)
     body.BackgroundTransparency = 1
     body.Parent = dialog
 
@@ -4104,8 +4366,8 @@ confirmDialog = function(title, content, onConfirm)
     local pad = Instance.new("UIPadding")
     pad.PaddingTop = UDim.new(0, 6)
     pad.PaddingBottom = UDim.new(0, 8)
-    pad.PaddingLeft = UDim.new(0, 2)
-    pad.PaddingRight = UDim.new(0, 2)
+    pad.PaddingLeft = UDim.new(0, 8)
+    pad.PaddingRight = UDim.new(0, 8)
     pad.Parent = body
 
     btnYes.MouseButton1Click:Connect(function()
@@ -4166,210 +4428,32 @@ local HomeTab = createTab("Home")
 
 HomeTab:CreateSection("Home")
 
-local HomeTeleportData = {
-    Label = "Default",
-    Data = makeData(
-        Vector3.new(-9.783, 19.500, -2.133),
-        CFrame.new(-17.691278, 28.521162, -8.227553, -0.610420883, 0.476587325, -0.632653773, 0.000000000, 0.798727334, 0.601693094, 0.792077124, 0.367286026, -0.487559944),
-        CFrame.new(-9.783107, 20.999998, -2.133054, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
-        70.000,
-        Enum.CameraType.Custom,
-        12.500000,
-        0.500,
-        40.000
-    )
-}
-
-HomeTab:CreateButton({
-    Name = "Teleport to Home",
-    Callback = function()
-        teleportWithData(HomeTeleportData.Data)
-    end
-})
-
-local function fireReincarnation()
-    local remote = getMainRemote and getMainRemote() or nil
-    if not remote then
-        return
-    end
-    pcall(function()
-        remote:FireServer("Reincarnation")
-    end)
+do
+    HomeTab:CreateParagraph({
+        Title = "Informasi Script",
+        Content = table.concat({
+            "Ringkasan",
+            "Nama: Garden Incremental UI",
+            "Versi: " .. tostring(State.Version),
+            "Fokus: Teleport, automation, pembelian otomatis, logging/spy, dan utility tools.",
+            "",
+            "Cara Pakai Cepat",
+            "1) Pilih tab di sisi kiri sesuai kebutuhan.",
+            "2) Aktifkan toggle/slider yang diperlukan, lalu cek notifikasi untuk status.",
+            "3) Buka Settings untuk tema, font, dan pengaturan global (mis. Auto Buy Click Speed).",
+            "",
+            "Fitur Inti",
+            "- Teleport world/event (termasuk tombol Home).",
+            "- Auto Buy Shop per world/event.",
+            "- Automation (auto teleport/loop action).",
+            "- Logger/Spy + Utility Tools untuk monitoring.",
+            "",
+            "Tips & Catatan",
+            "- Auto Reload membutuhkan executor yang mendukung queue_on_teleport.",
+            "- Gunakan ikon resize di pojok kanan bawah untuk ubah ukuran UI."
+        }, "\n")
+    })
 end
-
-HomeTab:CreateButton({
-    Name = "Reincarnation",
-    Callback = function()
-        fireReincarnation()
-    end
-})
-
-HomeTab:CreateSection("Logging")
-
-local HomeLogEnabled = false
-local HomeLogConnection = nil
-local HomeLogs = {}
-
-local HomeLogContainer = HomeTab:CreateContainer(200)
-local HomeLogTitle = Instance.new("TextLabel")
-HomeLogTitle.Size = UDim2.new(1, 0, 0, 18)
-HomeLogTitle.BackgroundTransparency = 1
-HomeLogTitle.Font = Enum.Font.GothamSemibold
-HomeLogTitle.TextSize = 12
-HomeLogTitle.TextXAlignment = Enum.TextXAlignment.Left
-HomeLogTitle.Text = "Logs (Developer Console)"
-HomeLogTitle.Parent = HomeLogContainer
-registerTheme(HomeLogTitle, "TextColor3", "Text")
-
-local HomeLogScroll = Instance.new("ScrollingFrame")
-HomeLogScroll.Size = UDim2.new(1, 0, 1, -22)
-HomeLogScroll.Position = UDim2.new(0, 0, 0, 20)
-HomeLogScroll.BorderSizePixel = 0
-HomeLogScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
-HomeLogScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
-HomeLogScroll.ScrollBarThickness = 6
-HomeLogScroll.ScrollingDirection = Enum.ScrollingDirection.Y
-HomeLogScroll.ClipsDescendants = true
-HomeLogScroll.Parent = HomeLogContainer
-registerTheme(HomeLogScroll, "BackgroundColor3", "Panel")
-
-local HomeLogList = Instance.new("UIListLayout")
-HomeLogList.Padding = UDim.new(0, 6)
-HomeLogList.SortOrder = Enum.SortOrder.LayoutOrder
-HomeLogList.Parent = HomeLogScroll
-
-trackConnection(HomeLogList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
-    HomeLogScroll.CanvasSize = UDim2.new(0, 0, 0, HomeLogList.AbsoluteContentSize.Y + 12)
-end))
-
-local HomeLogPad = Instance.new("UIPadding")
-HomeLogPad.PaddingTop = UDim.new(0, 6)
-HomeLogPad.PaddingBottom = UDim.new(0, 6)
-HomeLogPad.PaddingLeft = UDim.new(0, 6)
-HomeLogPad.PaddingRight = UDim.new(0, 6)
-HomeLogPad.Parent = HomeLogScroll
-
-local function clearHomeLogs()
-    for i = #HomeLogs, 1, -1 do
-        if HomeLogs[i].Frame then
-            HomeLogs[i].Frame:Destroy()
-        end
-        table.remove(HomeLogs, i)
-    end
-end
-
-local function addHomeLogEntry(msg, msgType)
-    local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(1, 0, 0, 0)
-    frame.AutomaticSize = Enum.AutomaticSize.Y
-    frame.BorderSizePixel = 0
-    frame.Parent = HomeLogScroll
-    registerTheme(frame, "BackgroundColor3", "Main")
-
-    local pad = Instance.new("UIPadding")
-    pad.PaddingTop = UDim.new(0, 6)
-    pad.PaddingBottom = UDim.new(0, 6)
-    pad.PaddingLeft = UDim.new(0, 8)
-    pad.PaddingRight = UDim.new(0, 8)
-    pad.Parent = frame
-
-    local header = Instance.new("Frame")
-    header.Size = UDim2.new(1, 0, 0, 18)
-    header.BackgroundTransparency = 1
-    header.Parent = frame
-
-    local title = Instance.new("TextLabel")
-    title.Size = UDim2.new(1, -60, 1, 0)
-    title.BackgroundTransparency = 1
-    title.Font = Enum.Font.GothamSemibold
-    title.TextSize = 12
-    title.TextXAlignment = Enum.TextXAlignment.Left
-    local typeName = msgType and tostring(msgType) or "Message"
-    title.Text = typeName
-    title.Parent = header
-    registerTheme(title, "TextColor3", "Text")
-
-    local copyBtn = Instance.new("TextButton")
-    copyBtn.Size = UDim2.new(0, 50, 1, 0)
-    copyBtn.Position = UDim2.new(1, -55, 0, 0)
-    copyBtn.BorderSizePixel = 0
-    copyBtn.Font = Enum.Font.Gotham
-    copyBtn.TextSize = 11
-    copyBtn.Text = "Copy"
-    copyBtn.AutoButtonColor = false
-    copyBtn.Parent = header
-    registerTheme(copyBtn, "BackgroundColor3", "Panel")
-    registerTheme(copyBtn, "TextColor3", "Text")
-
-    local body = Instance.new("TextLabel")
-    body.Size = UDim2.new(1, 0, 0, 0)
-    body.AutomaticSize = Enum.AutomaticSize.Y
-    body.BackgroundTransparency = 1
-    body.Font = Enum.Font.Gotham
-    body.TextSize = 12
-    body.TextWrapped = true
-    body.TextXAlignment = Enum.TextXAlignment.Left
-    body.TextYAlignment = Enum.TextYAlignment.Top
-    body.Text = msg
-    body.Parent = frame
-    registerTheme(body, "TextColor3", "Muted")
-
-    local list = Instance.new("UIListLayout")
-    list.Padding = UDim.new(0, 4)
-    list.Parent = frame
-
-    copyBtn.MouseButton1Click:Connect(function()
-        if setclipboard then
-            setclipboard(msg)
-            notify("Copied", "Log disalin ke clipboard", 2)
-        else
-            notify("Copy Failed", "setclipboard tidak tersedia", 2)
-        end
-    end)
-
-    HomeLogs[#HomeLogs + 1] = {Frame = frame, Text = msg, Type = msgType}
-end
-
-local function loadHomeLogsFromBuffer()
-    clearHomeLogs()
-    local history = getLogHistoryAll()
-    for _, item in ipairs(history) do
-        addHomeLogEntry(item.Message, item.Type)
-    end
-    for _, item in ipairs(ConsoleLogBuffer) do
-        addHomeLogEntry(item.Message, item.Type)
-    end
-end
-
-HomeTab:CreateToggle({
-    Name = "Enable Logging",
-    CurrentValue = false,
-    Callback = function(v)
-        HomeLogEnabled = v
-        if HomeLogEnabled then
-            loadHomeLogsFromBuffer()
-            if HomeLogConnection then
-                HomeLogConnection:Disconnect()
-            end
-            HomeLogConnection = trackConnection(LogService.MessageOut:Connect(function(message, msgType)
-                addHomeLogEntry(message, msgType)
-            end))
-        else
-            if HomeLogConnection then
-                HomeLogConnection:Disconnect()
-                HomeLogConnection = nil
-            end
-        end
-    end
-})
-
-HomeTab:CreateButton({
-    Name = "Clear All Logs",
-    Callback = function()
-        clearHomeLogs()
-        ConsoleLogBuffer = {}
-    end
-})
 
 -- =====================================================
 -- PLAYER TAB
@@ -4641,9 +4725,13 @@ teleportWithData = function(data)
         local targetCFrame = data.camera.cframe or cam.CFrame
         local targetFocus = data.camera.focus or cam.Focus
         local targetZoom = data.camera.zoom or (targetCFrame.Position - targetFocus.Position).Magnitude
+        local targetMinZoom = data.camera.min_zoom
+        local targetMaxZoom = data.camera.max_zoom
         local oldMinZoom = LP.CameraMinZoomDistance
         local oldMaxZoom = LP.CameraMaxZoomDistance
         local oldCamMode = LP.CameraMode
+        local restoreMinZoom = (type(targetMinZoom) == "number" and targetMinZoom) or oldMinZoom
+        local restoreMaxZoom = (type(targetMaxZoom) == "number" and targetMaxZoom) or oldMaxZoom
 
         cam.CameraType = Enum.CameraType.Scriptable
         cam.FieldOfView = targetFOV
@@ -4658,11 +4746,30 @@ teleportWithData = function(data)
         local lockSeconds = 0.25
         local startTime = os.clock()
         local rsConn
+        local restored = false
+        local function restoreCamera()
+            if restored then
+                return
+            end
+            restored = true
+            if cam then
+                cam.CameraSubject = targetSubject
+                cam.CameraType = targetType
+            end
+            task.delay(0.05, function()
+                pcall(function()
+                    LP.CameraMinZoomDistance = restoreMinZoom
+                    LP.CameraMaxZoomDistance = restoreMaxZoom
+                    LP.CameraMode = oldCamMode
+                end)
+            end)
+        end
         rsConn = RunService.RenderStepped:Connect(function()
             if not cam then
                 if rsConn then
                     rsConn:Disconnect()
                 end
+                restoreCamera()
                 return
             end
             cam.FieldOfView = targetFOV
@@ -4676,18 +4783,11 @@ teleportWithData = function(data)
                 if rsConn then
                     rsConn:Disconnect()
                 end
-                cam.CameraSubject = targetSubject
-                cam.CameraType = targetType
-                task.delay(0.05, function()
-                    pcall(function()
-                        LP.CameraMinZoomDistance = oldMinZoom
-                        LP.CameraMaxZoomDistance = oldMaxZoom
-                        LP.CameraMode = oldCamMode
-                    end)
-                end)
+                restoreCamera()
             end
         end)
         trackConnection(rsConn)
+        task.delay(lockSeconds + 0.3, restoreCamera)
     end
 end
 
@@ -4703,6 +4803,167 @@ State.DevSections.Notify = createSectionBox(DevTab:GetPage(), "Notify Tools")
 State.DevSections.CopyData = createSectionBox(DevTab:GetPage(), "Copy Data Logger")
 State.DevSections.Action = createSectionBox(DevTab:GetPage(), "Action Logger")
 State.DevSections.Currency = createSectionBox(DevTab:GetPage(), "Currency Tracker")
+State.DevSections.ConsoleLog = createSectionBox(DevTab:GetPage(), "Developer Console Log")
+
+do
+    local DevLogEnabled = false
+    local DevLogConnection = nil
+    local DevLogs = {}
+
+    local DevLogContainer = createContainer(State.DevSections.ConsoleLog, 200)
+    local DevLogTitle = Instance.new("TextLabel")
+    DevLogTitle.Size = UDim2.new(1, 0, 0, 18)
+    DevLogTitle.BackgroundTransparency = 1
+    DevLogTitle.Font = Enum.Font.GothamSemibold
+    DevLogTitle.TextSize = 12
+    DevLogTitle.TextXAlignment = Enum.TextXAlignment.Left
+    DevLogTitle.Text = "Logs (Developer Console)"
+    DevLogTitle.Parent = DevLogContainer
+    registerTheme(DevLogTitle, "TextColor3", "Text")
+
+    local DevLogScroll = Instance.new("ScrollingFrame")
+    DevLogScroll.Size = UDim2.new(1, 0, 1, -22)
+    DevLogScroll.Position = UDim2.new(0, 0, 0, 20)
+    DevLogScroll.BorderSizePixel = 0
+    DevLogScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+    DevLogScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    DevLogScroll.ScrollBarThickness = 6
+    DevLogScroll.ScrollingDirection = Enum.ScrollingDirection.Y
+    DevLogScroll.ClipsDescendants = true
+    DevLogScroll.Parent = DevLogContainer
+    registerTheme(DevLogScroll, "BackgroundColor3", "Panel")
+
+    local DevLogList = Instance.new("UIListLayout")
+    DevLogList.Padding = UDim.new(0, 6)
+    DevLogList.SortOrder = Enum.SortOrder.LayoutOrder
+    DevLogList.Parent = DevLogScroll
+
+    trackConnection(DevLogList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+        DevLogScroll.CanvasSize = UDim2.new(0, 0, 0, DevLogList.AbsoluteContentSize.Y + 12)
+    end))
+
+    local DevLogPad = Instance.new("UIPadding")
+    DevLogPad.PaddingTop = UDim.new(0, 6)
+    DevLogPad.PaddingBottom = UDim.new(0, 6)
+    DevLogPad.PaddingLeft = UDim.new(0, 6)
+    DevLogPad.PaddingRight = UDim.new(0, 6)
+    DevLogPad.Parent = DevLogScroll
+
+    local function clearDevLogs()
+        for i = #DevLogs, 1, -1 do
+            if DevLogs[i].Frame then
+                DevLogs[i].Frame:Destroy()
+            end
+            table.remove(DevLogs, i)
+        end
+    end
+
+    local function addDevLogEntry(msg, msgType)
+        local frame = Instance.new("Frame")
+        frame.Size = UDim2.new(1, 0, 0, 0)
+        frame.AutomaticSize = Enum.AutomaticSize.Y
+        frame.BorderSizePixel = 0
+        frame.Parent = DevLogScroll
+        registerTheme(frame, "BackgroundColor3", "Main")
+
+        local pad = Instance.new("UIPadding")
+        pad.PaddingTop = UDim.new(0, 6)
+        pad.PaddingBottom = UDim.new(0, 6)
+        pad.PaddingLeft = UDim.new(0, 8)
+        pad.PaddingRight = UDim.new(0, 8)
+        pad.Parent = frame
+
+        local header = Instance.new("Frame")
+        header.Size = UDim2.new(1, 0, 0, 18)
+        header.BackgroundTransparency = 1
+        header.Parent = frame
+
+        local title = Instance.new("TextLabel")
+        title.Size = UDim2.new(1, -60, 1, 0)
+        title.BackgroundTransparency = 1
+        title.Font = Enum.Font.GothamSemibold
+        title.TextSize = 12
+        title.TextXAlignment = Enum.TextXAlignment.Left
+        local typeName = msgType and tostring(msgType) or "Message"
+        title.Text = typeName
+        title.Parent = header
+        registerTheme(title, "TextColor3", "Text")
+
+        local copyBtn = Instance.new("TextButton")
+        copyBtn.Size = UDim2.new(0, 50, 1, 0)
+        copyBtn.Position = UDim2.new(1, -55, 0, 0)
+        copyBtn.BorderSizePixel = 0
+        copyBtn.Font = Enum.Font.Gotham
+        copyBtn.TextSize = 11
+        copyBtn.Text = "Copy"
+        copyBtn.AutoButtonColor = false
+        copyBtn.Parent = header
+        registerTheme(copyBtn, "BackgroundColor3", "Panel")
+        registerTheme(copyBtn, "TextColor3", "Text")
+
+        local body = Instance.new("TextLabel")
+        body.Size = UDim2.new(1, 0, 0, 0)
+        body.AutomaticSize = Enum.AutomaticSize.Y
+        body.BackgroundTransparency = 1
+        body.Font = Enum.Font.Gotham
+        body.TextSize = 12
+        body.TextWrapped = true
+        body.TextXAlignment = Enum.TextXAlignment.Left
+        body.TextYAlignment = Enum.TextYAlignment.Top
+        body.Text = msg
+        body.Parent = frame
+        registerTheme(body, "TextColor3", "Muted")
+
+        local list = Instance.new("UIListLayout")
+        list.Padding = UDim.new(0, 4)
+        list.Parent = frame
+
+        copyBtn.MouseButton1Click:Connect(function()
+            if setclipboard then
+                setclipboard(msg)
+                notify("Copied", "Log disalin ke clipboard", 2)
+            else
+                notify("Copy Failed", "setclipboard tidak tersedia", 2)
+            end
+        end)
+
+        DevLogs[#DevLogs + 1] = {Frame = frame, Text = msg, Type = msgType}
+    end
+
+    local function loadDevLogsFromBuffer()
+        clearDevLogs()
+        local history = getLogHistoryAll()
+        for _, item in ipairs(history) do
+            addDevLogEntry(item.Message, item.Type)
+        end
+        for _, item in ipairs(ConsoleLogBuffer) do
+            addDevLogEntry(item.Message, item.Type)
+        end
+    end
+
+    createToggle(State.DevSections.ConsoleLog, "Enable Logging", nil, false, function(v)
+        DevLogEnabled = v
+        if DevLogEnabled then
+            loadDevLogsFromBuffer()
+            if DevLogConnection then
+                DevLogConnection:Disconnect()
+            end
+            DevLogConnection = trackConnection(LogService.MessageOut:Connect(function(message, msgType)
+                addDevLogEntry(message, msgType)
+            end))
+        else
+            if DevLogConnection then
+                DevLogConnection:Disconnect()
+                DevLogConnection = nil
+            end
+        end
+    end)
+
+    createButton(State.DevSections.ConsoleLog, "Clear All Logs", function()
+        clearDevLogs()
+        ConsoleLogBuffer = {}
+    end)
+end
 
 State.NotifyTest = State.NotifyTest or {}
 State.NotifyTest.Setup = State.NotifyTest.Setup or function(parent)
@@ -7164,7 +7425,7 @@ SettingsTab:CreateDropdown({
 
 SettingsTab:CreateDropdown({
     Name = "Font",
-    Options = {"Gotham", "SourceSans", "Arial", "Code"},
+    Options = {"Gotham", "SourceSans", "Arial", "Code", "Roboto", "RobotoMono", "Montserrat", "Oswald", "TitilliumWeb", "Ubuntu", "Nunito"},
     CurrentOption = "Gotham",
     Flag = "Font",
     Callback = function(fontName)
@@ -7172,6 +7433,19 @@ SettingsTab:CreateDropdown({
         if State.Fonts and State.Fonts.Apply then
             State.Fonts.Apply()
         end
+        saveConfig()
+    end
+})
+
+SettingsTab:CreateSection("Setup General Feautred")
+SettingsTab:CreateSlider({
+    Name = "Auto Buy Click Speed (sec)",
+    Range = {0.1, 5},
+    CurrentValue = Config.AutoBuyClickSpeed or 0.6,
+    Decimals = 1,
+    Callback = function(v)
+        Config.AutoBuyClickSpeed = v
+        setGlobalClickCooldown("AutoBuyGlobal", v)
         saveConfig()
     end
 })
@@ -7320,6 +7594,23 @@ local function createVirtualButtonRow(parent, items)
     layout.Padding = UDim.new(0, 6)
     layout.Parent = row
 
+    State.GridTextConstraints = State.GridTextConstraints or {}
+    State.GridTextScaleApply = State.GridTextScaleApply or function(scale)
+        local s = tonumber(scale) or 1
+        for _, entry in ipairs(State.GridTextConstraints) do
+            local clamp = entry.Clamp
+            if clamp and clamp.Parent then
+                local maxSize = math.max(6, math.floor(entry.BaseMax * s + 0.5))
+                local minSize = math.max(6, math.floor(entry.BaseMin * s + 0.5))
+                if maxSize < minSize then
+                    minSize = maxSize
+                end
+                clamp.MaxTextSize = maxSize
+                clamp.MinTextSize = minSize
+            end
+        end
+    end
+
     for _, item in ipairs(items) do
         local btn = Instance.new("TextButton")
         btn.Size = UDim2.new(1 / 3, -4, 1, 0)
@@ -7344,10 +7635,27 @@ local function createVirtualButtonRow(parent, items)
 
         local sizeClamp = Instance.new("UITextSizeConstraint")
         sizeClamp.MinTextSize = 8
-        sizeClamp.MaxTextSize = 12
+        sizeClamp.MaxTextSize = btn.TextSize
         sizeClamp.Parent = btn
+        State.GridTextConstraints[#State.GridTextConstraints + 1] = {
+            Clamp = sizeClamp,
+            BaseMin = sizeClamp.MinTextSize,
+            BaseMax = sizeClamp.MaxTextSize
+        }
+        if State.GridTextScaleApply and MainScale then
+            State.GridTextScaleApply(MainScale.Scale)
+        end
 
         btn.MouseButton1Click:Connect(function()
+            local list = item and item.Cycle or nil
+            if type(list) == "table" and #list > 0 then
+                item.Index = (item.Index or 0) + 1
+                if item.Index > #list then
+                    item.Index = 1
+                end
+                teleportWithData(list[item.Index])
+                return
+            end
             teleportWithData(item.Data)
         end)
     end
@@ -7468,6 +7776,26 @@ local function initRuneLocationTab()
             19.504005,
             0.500,
             40.000
+        )},
+        {Label = "Trick or Treat", Data = makeData(
+            Vector3.new(-1858.588, 24.202, -2152.789),
+            CFrame.new(-1880.230103, 36.479126, -2158.660645, -0.261842459, 0.418060958, -0.869864047, 0.000000000, 0.901310205, 0.433174133, 0.965110600, 0.113423377, -0.236001298),
+            CFrame.new(-1858.587891, 25.701752, -2152.788818, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+            70.000,
+            Enum.CameraType.Custom,
+            24.880020,
+            0.500,
+            40.000
+        )},
+        {Label = "Claim", Data = makeData(
+            Vector3.new(-5294.780, 9.663, -30.830),
+            CFrame.new(-5306.954102, 17.276363, -30.306751, 0.042931765, 0.447980076, -0.893012166, 0.000000000, 0.893836260, 0.448393494, 0.999077976, -0.019250324, 0.038373969),
+            CFrame.new(-5294.779785, 11.163379, -30.829906, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+            70.000,
+            Enum.CameraType.Custom,
+            13.632911,
+            0.500,
+            40.000
         )}
     }
     createVirtualGrid(potionSection, potionList)
@@ -7573,7 +7901,62 @@ local function initRuneLocationTab()
             18.377682,
             0.500,
             40.000
-        )}
+        )},
+        {
+            Label = "Boss Enemy",
+            Cycle = {
+                makeData(
+                    Vector3.new(-2092.624, 19.919, -2027.826),
+                    CFrame.new(-2076.988770, 33.313568, -2052.577881, -0.845453262, -0.201025277, 0.494770318, 0.000000000, 0.926450491, 0.376417011, -0.534049392, 0.318242997, -0.783270597),
+                    CFrame.new(-2092.623535, 21.418791, -2027.826416, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    31.600105,
+                    0.500,
+                    40.000
+                ),
+                makeData(
+                    Vector3.new(-2217.817, 19.919, -2027.757),
+                    CFrame.new(-2211.418213, 29.768099, -2057.554688, -0.977711976, -0.055472907, 0.202489734, 0.000000000, 0.964462817, 0.264218599, -0.209950805, 0.258329690, -0.942966819),
+                    CFrame.new(-2217.816895, 21.418791, -2027.756836, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    31.600096,
+                    0.500,
+                    40.000
+                ),
+                makeData(
+                    Vector3.new(-2220.480, 19.919, -2260.211),
+                    CFrame.new(-2228.719482, 29.595963, -2230.820068, 0.962882936, 0.069847323, -0.260725409, 0.000000000, 0.965938628, 0.258771241, 0.269919187, -0.249166414, 0.930085897),
+                    CFrame.new(-2220.480469, 21.418791, -2260.210693, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    31.599941,
+                    0.500,
+                    40.000
+                ),
+                makeData(
+                    Vector3.new(-2090.565, 19.734, -2263.877),
+                    CFrame.new(-2086.972412, 32.797325, -2234.693604, 0.992502272, -0.044726547, 0.113747679, 0.000000000, 0.930640101, 0.365935594, -0.122225188, -0.363191903, 0.923662603),
+                    CFrame.new(-2090.566895, 21.233759, -2263.881348, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    31.600012,
+                    0.500,
+                    40.000
+                ),
+                makeData(
+                    Vector3.new(-2165.413, 19.919, -2141.760),
+                    CFrame.new(-2171.543213, 40.356079, -2107.064209, 0.984748423, 0.082368985, -0.153250992, 0.000000000, 0.880832613, 0.473427862, 0.173984230, -0.466207355, 0.867398560),
+                    CFrame.new(-2165.413086, 21.418962, -2141.760254, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+                    70.000,
+                    Enum.CameraType.Custom,
+                    40.000107,
+                    0.500,
+                    40.000
+                )
+            }
+        }
     }
     createVirtualGrid(statSection, statList)
 end
@@ -7607,6 +7990,23 @@ local function createButtonRow(parent, items, onClick)
     layout.Padding = UDim.new(0, 6)
     layout.Parent = row
 
+    State.GridTextConstraints = State.GridTextConstraints or {}
+    State.GridTextScaleApply = State.GridTextScaleApply or function(scale)
+        local s = tonumber(scale) or 1
+        for _, entry in ipairs(State.GridTextConstraints) do
+            local clamp = entry.Clamp
+            if clamp and clamp.Parent then
+                local maxSize = math.max(6, math.floor(entry.BaseMax * s + 0.5))
+                local minSize = math.max(6, math.floor(entry.BaseMin * s + 0.5))
+                if maxSize < minSize then
+                    minSize = maxSize
+                end
+                clamp.MaxTextSize = maxSize
+                clamp.MinTextSize = minSize
+            end
+        end
+    end
+
     for _, item in ipairs(items) do
         local btn = Instance.new("TextButton")
         btn.Size = UDim2.new(1 / 3, -4, 1, 0)
@@ -7632,8 +8032,16 @@ local function createButtonRow(parent, items, onClick)
 
         local sizeClamp = Instance.new("UITextSizeConstraint")
         sizeClamp.MinTextSize = 8
-        sizeClamp.MaxTextSize = 12
+        sizeClamp.MaxTextSize = btn.TextSize
         sizeClamp.Parent = btn
+        State.GridTextConstraints[#State.GridTextConstraints + 1] = {
+            Clamp = sizeClamp,
+            BaseMin = sizeClamp.MinTextSize,
+            BaseMax = sizeClamp.MaxTextSize
+        }
+        if State.GridTextScaleApply and MainScale then
+            State.GridTextScaleApply(MainScale.Scale)
+        end
 
         btn.MouseButton1Click:Connect(function()
             ActiveTeleportButton = btn
@@ -7869,6 +8277,20 @@ do
     registerRuneLocations("Forest", ForestList)
     createGrid(ForestTeleportSection, ForestList, function(item)
         teleportWithData(item.Data)
+    end)
+
+    local ForestActionSection = createSectionBox(State.Tabs.Forest:GetPage(), "Action")
+    local function fireReincarnation()
+        local remote = getMainRemote and getMainRemote() or nil
+        if not remote then
+            return
+        end
+        pcall(function()
+            remote:FireServer("Reincarnation")
+        end)
+    end
+    createButton(ForestActionSection, "Reincarnation", function()
+        fireReincarnation()
     end)
 end
 
@@ -9488,7 +9910,8 @@ do
     for _, item in ipairs(HellList) do
         if item.Label == "Madness Shop" then
             State.HellTeleports.Madness = item.Data
-            break
+        elseif item.Label == "Rune" then
+            State.HellTeleports.Rune = item.Data
         end
     end
     createGrid(HellTeleportSection, HellList, function(item)
@@ -9558,45 +9981,6 @@ State.InitHell = function()
     local FullAutomationSection = createSectionBox(tab:GetPage(), "Full Automation")
     local StarterAutomationSection = createSubSectionBox(FullAutomationSection, "Starter Automation")
 
-    local StarterShops = {
-        {
-            Key = "Madness",
-            Title = "Madness Shop",
-            ShopName = "Madness",
-            Items = {
-                "Madness Multiplier",
-                "Madness Multiplier II",
-                "Ember Multiplier",
-                "Hell XP Multiplier",
-                "Sins Multiplier",
-                "Madness Press Speed",
-                "Connor Madnessly Balanced It"
-            }
-        },
-        {
-            Key = "HellXP",
-            Title = "Hell XP Shop",
-            ShopName = "Hell XP",
-            Items = {
-                "Hell XP Multiplier",
-                "Madness Multiplier",
-                "Ember Multiplier",
-                "Sins Multiplier"
-            }
-        },
-        {
-            Key = "Sins",
-            Title = "Sins Shop",
-            ShopName = "Sins",
-            Items = {
-                "Madness Multiplier",
-                "Ember Multiplier",
-                "Sins Multiplier",
-                "Hell XP Multiplier"
-            }
-        }
-    }
-
     local DropperRank = {
         One = 1,
         Two = 2,
@@ -9620,27 +10004,10 @@ State.InitHell = function()
 
     local function ensureStarterConfig()
         if Config.HellStarterEnabled == nil then Config.HellStarterEnabled = false end
-        if Config.HellStarterUseUpgradeAll == nil then Config.HellStarterUseUpgradeAll = true end
-        if Config.HellStarterSkipMaxed == nil then Config.HellStarterSkipMaxed = true end
         if Config.HellStarterSkipMaxedDropper == nil then Config.HellStarterSkipMaxedDropper = true end
-        if Config.HellStarterClickSpeed == nil then Config.HellStarterClickSpeed = 0.6 end
-        if Config.HellStarterTeleportEnabled == nil then Config.HellStarterTeleportEnabled = false end
+        if Config.HellStarterTeleportLogicEnabled == nil then Config.HellStarterTeleportLogicEnabled = true end
         if Config.HellStarterTeleportHold == nil then Config.HellStarterTeleportHold = 15 end
         if Config.HellStarterTeleportStep == nil then Config.HellStarterTeleportStep = 3 end
-
-        if type(Config.HellStarterItems) ~= "table" then
-            Config.HellStarterItems = {}
-        end
-        for _, shop in ipairs(StarterShops) do
-            if type(Config.HellStarterItems[shop.Key]) ~= "table" then
-                Config.HellStarterItems[shop.Key] = {}
-            end
-            for _, item in ipairs(shop.Items) do
-                if Config.HellStarterItems[shop.Key][item] == nil then
-                    Config.HellStarterItems[shop.Key][item] = true
-                end
-            end
-        end
 
         if type(Config.HellStarterDroppers) ~= "table" then
             Config.HellStarterDroppers = {}
@@ -9652,7 +10019,40 @@ State.InitHell = function()
         end
     end
 
+    local function ensureMiddleConfig()
+        if Config.HellMiddleEnabled == nil then Config.HellMiddleEnabled = false end
+        if Config.HellMiddleSkipMaxedDropper == nil then Config.HellMiddleSkipMaxedDropper = true end
+        if Config.HellMiddleTeleportLogicEnabled == nil then Config.HellMiddleTeleportLogicEnabled = true end
+        if Config.HellMiddleTeleportHold == nil then Config.HellMiddleTeleportHold = 15 end
+        if Config.HellMiddleTeleportStep == nil then Config.HellMiddleTeleportStep = 3 end
+
+        if type(Config.HellMiddleDroppers) ~= "table" then
+            Config.HellMiddleDroppers = {}
+        end
+        for _, name in ipairs(DropperOrder) do
+            if Config.HellMiddleDroppers[name] == nil then
+                Config.HellMiddleDroppers[name] = (name == "One")
+            end
+        end
+    end
+
+    local function ensureAdvancedConfig()
+        if Config.HellAdvancedEnabled == nil then Config.HellAdvancedEnabled = false end
+        if Config.HellAdvancedSkipMaxedDropper == nil then Config.HellAdvancedSkipMaxedDropper = true end
+        if Config.HellAdvancedTeleportStep == nil then Config.HellAdvancedTeleportStep = 3 end
+        if type(Config.HellAdvancedDroppers) ~= "table" then
+            Config.HellAdvancedDroppers = {}
+        end
+        for _, name in ipairs(DropperOrder) do
+            if Config.HellAdvancedDroppers[name] == nil then
+                Config.HellAdvancedDroppers[name] = (name == "One")
+            end
+        end
+    end
+
     ensureStarterConfig()
+    ensureMiddleConfig()
+    ensureAdvancedConfig()
     saveConfig()
 
     local function setControlsEnabled(controls, enabled)
@@ -9727,56 +10127,20 @@ State.InitHell = function()
         }
     end
 
-    local function addListHeader(parent, text)
-        local label = Instance.new("TextLabel")
-        label.Size = UDim2.new(1, 0, 0, 18)
-        label.BackgroundTransparency = 1
-        label.Font = Enum.Font.GothamSemibold
-        label.TextSize = 12
-        label.TextXAlignment = Enum.TextXAlignment.Left
-        label.Text = text
-        label.Parent = parent
-        registerTheme(label, "TextColor3", "Text")
-        return label
-    end
-
-    local function addListDivider(parent)
-        local div = Instance.new("Frame")
-        div.Size = UDim2.new(1, 0, 0, 1)
-        div.BorderSizePixel = 0
-        div.Parent = parent
-        registerTheme(div, "BackgroundColor3", "Muted")
-        return div
-    end
-
-    local itemEnabled = Config.HellStarterItems
     local dropperEnabled = Config.HellStarterDroppers
 
     local starterEnabled = Config.HellStarterEnabled == true
-    local useUpgradeAll = Config.HellStarterUseUpgradeAll == true
-    local skipMaxedEnabled = Config.HellStarterSkipMaxed == true
     local skipMaxedDropperEnabled = Config.HellStarterSkipMaxedDropper == true
-    local teleportEnabled = Config.HellStarterTeleportEnabled == true
-    local autoBuyConn = nil
     local promptConn = nil
     local popupConn = nil
-    local maxed = {}
     local dropperMaxed = {}
     local lastDropperName = nil
     local lastDropperTime = nil
-    local lastClick = 0
-    local accum = 0
-    local interval = 0.25
     local initialToken = 0
     local initialRunning = false
     local initialDone = false
     State.HellStarterTeleportToken = State.HellStarterTeleportToken or 0
     State.HellStarterTeleportRunning = State.HellStarterTeleportRunning or false
-
-    State.HellStarterShopIndex = 1
-    State.HellStarterItemIndex = State.HellStarterItemIndex or {}
-
-    setGlobalClickCooldown("HellStarterAuto", Config.HellStarterClickSpeed)
 
     local function argsHasMatch(args, match, depth)
         if not match or type(args) ~= "table" then
@@ -9801,22 +10165,11 @@ State.InitHell = function()
         return false
     end
 
-    local function resetStarterMaxedShops(shopKeys)
-        if type(shopKeys) ~= "table" then
-            return
-        end
-        for _, key in ipairs(shopKeys) do
-            maxed[key] = nil
-            State.HellStarterItemIndex[key] = 1
-        end
-    end
-
     local function resetStarterDropperMaxed()
         dropperMaxed = {}
     end
 
     local function triggerStarterResetTeleport()
-        resetStarterMaxedShops({"Madness", "HellXP"})
         resetStarterDropperMaxed()
         if starterEnabled then
             initialDone = false
@@ -9844,25 +10197,6 @@ State.InitHell = function()
             local lower = string.lower(msg)
             if string.find(lower, "successfully reached hell rank", 1, true) then
                 triggerStarterResetTeleport()
-                return
-            end
-            if string.find(lower, "already reached max upgrade", 1, true) then
-                local candidates = {}
-                for _, shop in ipairs(StarterShops) do
-                    local key = shop.Key
-                    for _, item in ipairs(shop.Items) do
-                        candidates[#candidates + 1] = {Key = key, Item = item}
-                    end
-                end
-                local resolved = State.ResolveMaxedMatches and State.ResolveMaxedMatches(lower, candidates) or {}
-                for _, entry in ipairs(resolved) do
-                    local key = entry.Key
-                    local item = entry.Item
-                    if key and item then
-                        maxed[key] = maxed[key] or {}
-                        maxed[key][item] = true
-                    end
-                end
                 return
             end
             if string.find(lower, "this dropper is already at max level", 1, true) then
@@ -9914,90 +10248,8 @@ State.InitHell = function()
         end
     end
 
-    local function getNextStarterItem()
-        local totalShops = #StarterShops
-        for _ = 1, totalShops do
-            local shop = StarterShops[State.HellStarterShopIndex]
-            State.HellStarterShopIndex += 1
-            if State.HellStarterShopIndex > totalShops then
-                State.HellStarterShopIndex = 1
-            end
-
-            local items = shop.Items
-            local idx = State.HellStarterItemIndex[shop.Key] or 1
-            for _ = 1, #items do
-                local name = items[idx]
-                idx += 1
-                if idx > #items then
-                    idx = 1
-                end
-                local enabled = itemEnabled[shop.Key] and itemEnabled[shop.Key][name]
-                local isMaxed = maxed[shop.Key] and maxed[shop.Key][name]
-                if enabled and (not skipMaxedEnabled or not isMaxed) then
-                    State.HellStarterItemIndex[shop.Key] = idx
-                    return shop.ShopName, name
-                end
-            end
-            State.HellStarterItemIndex[shop.Key] = idx
-        end
-        return nil
-    end
-
-    local function startAutoBuy()
-        if autoBuyConn then
-            autoBuyConn:Disconnect()
-            autoBuyConn = nil
-        end
-        accum = 0
-        lastClick = 0
-        maxed = {}
-        State.HellStarterShopIndex = 1
-        for _, shop in ipairs(StarterShops) do
-            State.HellStarterItemIndex[shop.Key] = 1
-        end
-        attachPromptListener()
-        attachPopupListener()
-        autoBuyConn = RunService.Heartbeat:Connect(function(dt)
-            if not starterEnabled then
-                return
-            end
-            accum += dt
-            if accum < interval then
-                return
-            end
-            accum = 0
-            local remote = getMainRemote and getMainRemote() or nil
-            if not remote then
-                return
-            end
-            local now = os.clock()
-            if now - lastClick < getGlobalClickCooldown("HellStarterAuto") then
-                return
-            end
-            local shopName, itemName = getNextStarterItem()
-            if not shopName or not itemName then
-                return
-            end
-            local action = useUpgradeAll and "UpgradeAll" or "Upgrade"
-            pcall(function()
-                remote:FireServer(action, shopName, itemName)
-            end)
-            lastClick = now
-        end)
-        trackConnection(autoBuyConn)
-    end
-
-    local function stopAutoBuy()
-        if autoBuyConn then
-            autoBuyConn:Disconnect()
-            autoBuyConn = nil
-        end
-        detachPromptListener()
-        detachPopupListener()
-    end
-
     local function canTeleport()
-        return Config.HellStarterEnabled == true and Config.HellStarterTeleportEnabled == true
+        return Config.HellStarterEnabled == true and Config.HellStarterTeleportLogicEnabled == true
     end
 
     local function isTeleportActive()
@@ -10020,8 +10272,9 @@ State.InitHell = function()
         setTeleportLabel("Hold: idle")
     end
 
+    local startTeleportLoop
     local function runStarterInitialTeleport()
-        if not starterEnabled then
+        if not canTeleport() then
             return
         end
         initialToken += 1
@@ -10058,7 +10311,7 @@ State.InitHell = function()
         end)
     end
 
-    local function startTeleportLoop()
+    startTeleportLoop = function()
         State.HellStarterTeleportToken = (State.HellStarterTeleportToken or 0) + 1
         local token = State.HellStarterTeleportToken
         State.HellStarterTeleportRunning = true
@@ -10119,15 +10372,19 @@ State.InitHell = function()
 
     local function applyStarterEnabled()
         starterEnabled = Config.HellStarterEnabled == true
-        useUpgradeAll = Config.HellStarterUseUpgradeAll == true
-        skipMaxedEnabled = Config.HellStarterSkipMaxed == true
         skipMaxedDropperEnabled = Config.HellStarterSkipMaxedDropper == true
-        teleportEnabled = Config.HellStarterTeleportEnabled == true
         if starterEnabled then
-            startAutoBuy()
-            runStarterInitialTeleport()
+            if canTeleport() then
+                attachPromptListener()
+                attachPopupListener()
+                runStarterInitialTeleport()
+            else
+                stopTeleportLoop()
+                setTeleportLabel("Hold: idle")
+            end
         else
-            stopAutoBuy()
+            detachPromptListener()
+            detachPopupListener()
             initialToken += 1
             initialRunning = false
             initialDone = false
@@ -10149,52 +10406,25 @@ State.InitHell = function()
         applyStarterEnabled()
     end)
 
-    local StarterModeToggle = addStarterControl(createToggle(StarterAutomationSection, "Mode: Upgrade All", "HellStarterUseUpgradeAll", Config.HellStarterUseUpgradeAll, function(v)
-        useUpgradeAll = v
-    end))
+    local StarterDescriptionLabel = Instance.new("TextLabel")
+    StarterDescriptionLabel.Size = UDim2.new(1, 0, 0, 34)
+    StarterDescriptionLabel.BackgroundTransparency = 1
+    StarterDescriptionLabel.Font = Enum.Font.Gotham
+    StarterDescriptionLabel.TextSize = 12
+    StarterDescriptionLabel.TextXAlignment = Enum.TextXAlignment.Left
+    StarterDescriptionLabel.TextYAlignment = Enum.TextYAlignment.Top
+    StarterDescriptionLabel.TextWrapped = true
+    StarterDescriptionLabel.Text = "Starter Automation fokus untuk teleport: otomatis ke Madness Shop dan Dropper sesuai urutan."
+    StarterDescriptionLabel.Parent = StarterAutomationSection
+    registerTheme(StarterDescriptionLabel, "TextColor3", "Muted")
 
-    local StarterClickSlider = addStarterControl(createSlider(StarterAutomationSection, "Click Speed (sec)", "HellStarterClickSpeed", 0.1, 5, Config.HellStarterClickSpeed, function(v)
-        setGlobalClickCooldown("HellStarterAuto", v)
-    end, 1))
-
-    local StarterSkipToggle = addStarterControl(createToggle(StarterAutomationSection, "Skip Maxed Items", "HellStarterSkipMaxed", Config.HellStarterSkipMaxed, function(v)
-        skipMaxedEnabled = v
-    end))
-
-    local itemListContainer
-    addStarterControl(createListDropdownRow(StarterAutomationSection, "Item List", function(open)
-        if itemListContainer then
-            itemListContainer.Visible = open
-        end
-    end))
-
-    local itemListContent = createSubSectionBox(StarterAutomationSection, "Item List")
-    itemListContainer = itemListContent.Parent
-    itemListContainer.Visible = false
-
-    local ItemToggleRefs = {}
-    for i, shop in ipairs(StarterShops) do
-        addListHeader(itemListContent, shop.Title)
-        for _, item in ipairs(shop.Items) do
-            local ctrl = createToggle(itemListContent, item, nil, itemEnabled[shop.Key][item], function(v)
-                itemEnabled[shop.Key][item] = v
-                Config.HellStarterItems[shop.Key][item] = v
-                saveConfig()
-            end)
-            ItemToggleRefs[shop.Key] = ItemToggleRefs[shop.Key] or {}
-            ItemToggleRefs[shop.Key][item] = ctrl
-            addStarterControl(ctrl)
-        end
-        if i < #StarterShops then
-            addListDivider(itemListContent)
-        end
-    end
-
-    local TeleportBox = createSubSectionBox(StarterAutomationSection, "Auto Teleport")
-    local StarterTeleportToggle = addStarterControl(createToggle(TeleportBox, "Enable Auto Teleport", "HellStarterTeleportEnabled", Config.HellStarterTeleportEnabled, function(v)
-        teleportEnabled = v
+    local StarterTeleportLogicToggle = addStarterControl(createToggle(StarterAutomationSection, "Enable Teleport Logic", "HellStarterTeleportLogicEnabled", Config.HellStarterTeleportLogicEnabled, function(v)
+        Config.HellStarterTeleportLogicEnabled = v == true
+        saveConfig()
         if canTeleport() then
             if starterEnabled then
+                attachPromptListener()
+                attachPopupListener()
                 if initialDone and not initialRunning then
                     startTeleportLoop()
                     local holdSeconds = math.clamp(tonumber(Config.HellStarterTeleportHold) or 15, 15, 900)
@@ -10204,16 +10434,18 @@ State.InitHell = function()
                 end
             end
         else
+            detachPromptListener()
+            detachPopupListener()
             stopTeleportLoop()
         end
     end))
 
-    local StarterHoldSlider = addStarterControl(createSlider(TeleportBox, "Madness Hold (sec)", "HellStarterTeleportHold", 15, 900, Config.HellStarterTeleportHold, nil, 0))
+    local StarterHoldSlider = addStarterControl(createSlider(StarterAutomationSection, "Madness Hold (sec)", "HellStarterTeleportHold", 15, 900, Config.HellStarterTeleportHold, nil, 0))
     local TeleportCountdownLabel = (function()
         local frame = Instance.new("Frame")
         frame.Size = UDim2.new(1, 0, 0, 24)
         frame.BorderSizePixel = 0
-        frame.Parent = TeleportBox
+        frame.Parent = StarterAutomationSection
         registerTheme(frame, "BackgroundColor3", "Main")
         addCorner(frame, 6)
         addStroke(frame, "Muted", 1, 0.8)
@@ -10255,19 +10487,19 @@ State.InitHell = function()
         setTeleportLabel("Hold: idle")
     end
 
-    local StarterStepSlider = addStarterControl(createSlider(TeleportBox, "Dropper Step (sec)", "HellStarterTeleportStep", 1, 10, Config.HellStarterTeleportStep, nil, 1))
-    local StarterSkipDropperToggle = addStarterControl(createToggle(TeleportBox, "Skip Maxed Level Dropper", "HellStarterSkipMaxedDropper", Config.HellStarterSkipMaxedDropper, function(v)
+    local StarterStepSlider = addStarterControl(createSlider(StarterAutomationSection, "Dropper Step (sec)", "HellStarterTeleportStep", 1, 10, Config.HellStarterTeleportStep, nil, 1))
+    local StarterSkipDropperToggle = addStarterControl(createToggle(StarterAutomationSection, "Skip Maxed Level Dropper", "HellStarterSkipMaxedDropper", Config.HellStarterSkipMaxedDropper, function(v)
         skipMaxedDropperEnabled = v == true
     end))
 
     local dropperListContainer
-    addStarterControl(createListDropdownRow(TeleportBox, "Dropper List", function(open)
+    addStarterControl(createListDropdownRow(StarterAutomationSection, "Dropper List", function(open)
         if dropperListContainer then
             dropperListContainer.Visible = open
         end
     end))
 
-    local dropperListContent = createSubSectionBox(TeleportBox, "Dropper List")
+    local dropperListContent = createSubSectionBox(StarterAutomationSection, "Dropper List")
     dropperListContainer = dropperListContent.Parent
     dropperListContainer.Visible = false
 
@@ -10285,35 +10517,19 @@ State.InitHell = function()
     createButton(StarterAutomationSection, "Reset Starter Automation", function()
         local defaults = {
             Enabled = false,
-            UseUpgradeAll = true,
-            SkipMaxed = true,
-            ClickSpeed = 0.6,
-            TeleportEnabled = false,
+            TeleportLogicEnabled = true,
             TeleportHold = 15,
             TeleportStep = 3,
             SkipMaxedDropper = true
         }
 
         Config.HellStarterEnabled = defaults.Enabled
-        Config.HellStarterUseUpgradeAll = defaults.UseUpgradeAll
-        Config.HellStarterSkipMaxed = defaults.SkipMaxed
         Config.HellStarterSkipMaxedDropper = defaults.SkipMaxedDropper
-        Config.HellStarterClickSpeed = defaults.ClickSpeed
-        Config.HellStarterTeleportEnabled = defaults.TeleportEnabled
+        Config.HellStarterTeleportLogicEnabled = defaults.TeleportLogicEnabled
         Config.HellStarterTeleportHold = defaults.TeleportHold
         Config.HellStarterTeleportStep = defaults.TeleportStep
-
-        if StarterModeToggle and StarterModeToggle.Set then
-            StarterModeToggle:Set(defaults.UseUpgradeAll)
-        end
-        if StarterSkipToggle and StarterSkipToggle.Set then
-            StarterSkipToggle:Set(defaults.SkipMaxed)
-        end
-        if StarterClickSlider and StarterClickSlider.Set then
-            StarterClickSlider:Set(defaults.ClickSpeed)
-        end
-        if StarterTeleportToggle and StarterTeleportToggle.Set then
-            StarterTeleportToggle:Set(defaults.TeleportEnabled)
+        if StarterTeleportLogicToggle and StarterTeleportLogicToggle.Set then
+            StarterTeleportLogicToggle:Set(defaults.TeleportLogicEnabled)
         end
         if StarterHoldSlider and StarterHoldSlider.Set then
             StarterHoldSlider:Set(defaults.TeleportHold)
@@ -10323,16 +10539,6 @@ State.InitHell = function()
         end
         if StarterSkipDropperToggle and StarterSkipDropperToggle.Set then
             StarterSkipDropperToggle:Set(defaults.SkipMaxedDropper)
-        end
-
-        for _, shop in ipairs(StarterShops) do
-            for _, item in ipairs(shop.Items) do
-                itemEnabled[shop.Key][item] = true
-                Config.HellStarterItems[shop.Key][item] = true
-                if ItemToggleRefs[shop.Key] and ItemToggleRefs[shop.Key][item] then
-                    ItemToggleRefs[shop.Key][item]:Set(true)
-                end
-            end
         end
 
         for _, name in ipairs(DropperOrder) do
@@ -10347,7 +10553,6 @@ State.InitHell = function()
         if StarterEnabledToggle and StarterEnabledToggle.Set then
             StarterEnabledToggle:Set(defaults.Enabled)
         end
-        setGlobalClickCooldown("HellStarterAuto", defaults.ClickSpeed)
         saveConfig()
         setControlsEnabled(StarterControls, defaults.Enabled)
         applyStarterEnabled()
@@ -10355,6 +10560,658 @@ State.InitHell = function()
 
     setControlsEnabled(StarterControls, starterEnabled)
     applyStarterEnabled()
+
+    local MiddleAutomationSection = createSubSectionBox(FullAutomationSection, "Middle Automation")
+    local middleDropperEnabled = Config.HellMiddleDroppers
+    local middleEnabled = Config.HellMiddleEnabled == true
+    local middleSkipMaxedDropperEnabled = Config.HellMiddleSkipMaxedDropper == true
+    local middlePromptConn = nil
+    local middlePopupConn = nil
+    local middleDropperMaxed = {}
+    local middleLastDropperName = nil
+    local middleLastDropperTime = nil
+    local middleInitialToken = 0
+    local middleInitialRunning = false
+    local middleInitialDone = false
+    State.HellMiddleTeleportToken = State.HellMiddleTeleportToken or 0
+    State.HellMiddleTeleportRunning = State.HellMiddleTeleportRunning or false
+
+    local function resetMiddleDropperMaxed()
+        middleDropperMaxed = {}
+    end
+
+    local function triggerMiddleResetTeleport()
+        resetMiddleDropperMaxed()
+        if middleEnabled then
+            middleInitialDone = false
+            runMiddleInitialTeleport()
+        end
+    end
+
+    local function attachMiddlePromptListener()
+        if middlePromptConn then
+            return
+        end
+        local ok, remote = pcall(function()
+            return game:GetService("ReplicatedStorage").Packages.Knit.Services.RemotesService.RE.PromptNotification
+        end)
+        if not ok or not remote or not remote:IsA("RemoteEvent") then
+            return
+        end
+        middlePromptConn = remote.OnClientEvent:Connect(function(_, msg)
+            if not middleEnabled then
+                return
+            end
+            if type(msg) ~= "string" then
+                return
+            end
+            local lower = string.lower(msg)
+            if string.find(lower, "successfully reached hell rank", 1, true) then
+                triggerMiddleResetTeleport()
+                return
+            end
+            if string.find(lower, "this dropper is already at max level", 1, true) then
+                if middleLastDropperName then
+                    local now = os.clock()
+                    if not middleLastDropperTime or (now - middleLastDropperTime) <= 10 then
+                        middleDropperMaxed[middleLastDropperName] = true
+                    end
+                end
+                return
+            end
+        end)
+        trackConnection(middlePromptConn)
+    end
+
+    local function attachMiddlePopupListener()
+        if middlePopupConn then
+            return
+        end
+        local ok, remote = pcall(function()
+            return game:GetService("ReplicatedStorage").Packages.Knit.Services.RemotesService.RE.PopUp
+        end)
+        if not ok or not remote or not remote:IsA("RemoteEvent") then
+            return
+        end
+        middlePopupConn = remote.OnClientEvent:Connect(function(...)
+            if not middleEnabled then
+                return
+            end
+            local args = {...}
+            if argsHasMatch(args, "sinsgain") then
+                triggerMiddleResetTeleport()
+            end
+        end)
+        trackConnection(middlePopupConn)
+    end
+
+    local function detachMiddlePromptListener()
+        if middlePromptConn then
+            middlePromptConn:Disconnect()
+            middlePromptConn = nil
+        end
+    end
+
+    local function detachMiddlePopupListener()
+        if middlePopupConn then
+            middlePopupConn:Disconnect()
+            middlePopupConn = nil
+        end
+    end
+
+    local function canMiddleTeleport()
+        return Config.HellMiddleEnabled == true and Config.HellMiddleTeleportLogicEnabled == true
+    end
+
+    local function isMiddleTeleportActive()
+        return State.HellMiddleTeleportRunning == true and canMiddleTeleport()
+    end
+
+    local function setMiddleTeleportLabel(text)
+        local value = text or "Hold: idle"
+        State.HellMiddleTeleportLabelText = value
+        if State.HellMiddleTeleportLabel and State.HellMiddleTeleportLabel.Set then
+            State.HellMiddleTeleportLabel:Set(value)
+        end
+    end
+
+    local function stopMiddleTeleportLoop()
+        State.HellMiddleTeleportRunning = false
+        State.HellMiddleTeleportToken = (State.HellMiddleTeleportToken or 0) + 1
+        State.HellMiddleTeleportHoldStart = nil
+        State.HellMiddleTeleportHoldSeconds = nil
+        setMiddleTeleportLabel("Hold: idle")
+    end
+
+    local startMiddleTeleportLoop
+    local function runMiddleInitialTeleport()
+        if not canMiddleTeleport() then
+            return
+        end
+        middleInitialToken += 1
+        local token = middleInitialToken
+        middleInitialRunning = true
+        middleInitialDone = false
+        stopMiddleTeleportLoop()
+        task.spawn(function()
+            local dropperData = State.HellTeleports and State.HellTeleports.Dropper and State.HellTeleports.Dropper["One"] or nil
+            if dropperData then
+                teleportWithData(dropperData)
+            end
+            local startWait = os.clock()
+            while token == middleInitialToken and (os.clock() - startWait) < 1 do
+                task.wait(0.1)
+            end
+            if token ~= middleInitialToken or not middleEnabled then
+                middleInitialRunning = false
+                return
+            end
+            local runeData = State.HellTeleports and State.HellTeleports.Rune or nil
+            if runeData then
+                teleportWithData(runeData)
+            end
+            middleInitialDone = true
+            middleInitialRunning = false
+            if canMiddleTeleport() then
+                startMiddleTeleportLoop()
+                local holdSeconds = math.clamp(tonumber(Config.HellMiddleTeleportHold) or 15, 15, 900)
+                setMiddleTeleportLabel(string.format("Hold: %.1fs", holdSeconds))
+            else
+                setMiddleTeleportLabel("Hold: idle")
+            end
+        end)
+    end
+
+    startMiddleTeleportLoop = function()
+        State.HellMiddleTeleportToken = (State.HellMiddleTeleportToken or 0) + 1
+        local token = State.HellMiddleTeleportToken
+        State.HellMiddleTeleportRunning = true
+        local holdSeconds = math.clamp(tonumber(Config.HellMiddleTeleportHold) or 15, 15, 900)
+        State.HellMiddleTeleportHoldSeconds = holdSeconds
+        State.HellMiddleTeleportHoldStart = os.clock()
+        setMiddleTeleportLabel(string.format("Hold: %.1fs", holdSeconds))
+        task.spawn(function()
+            while token == State.HellMiddleTeleportToken do
+                if not isMiddleTeleportActive() then
+                    break
+                end
+                local runeData = State.HellTeleports and State.HellTeleports.Rune or nil
+                if runeData then
+                    teleportWithData(runeData)
+                end
+                holdSeconds = math.clamp(tonumber(Config.HellMiddleTeleportHold) or 15, 15, 900)
+                local startHold = os.clock()
+                State.HellMiddleTeleportHoldSeconds = holdSeconds
+                State.HellMiddleTeleportHoldStart = startHold
+                while token == State.HellMiddleTeleportToken and (os.clock() - startHold) < holdSeconds do
+                    if not isMiddleTeleportActive() then
+                        break
+                    end
+                    local remaining = math.max(0, holdSeconds - (os.clock() - startHold))
+                    setMiddleTeleportLabel(string.format("Hold: %.1fs", remaining))
+                    task.wait(0.1)
+                end
+                setMiddleTeleportLabel("Hold: selesai")
+                if token ~= State.HellMiddleTeleportToken or not isMiddleTeleportActive() then
+                    break
+                end
+                local stepSeconds = math.clamp(tonumber(Config.HellMiddleTeleportStep) or 3, 1, 10)
+                for _, name in ipairs(DropperOrder) do
+                    if token ~= State.HellMiddleTeleportToken or not isMiddleTeleportActive() then
+                        break
+                    end
+                    local isMaxedDropper = middleDropperMaxed[name] == true
+                    if middleDropperEnabled[name] and (not middleSkipMaxedDropperEnabled or not isMaxedDropper) then
+                        local data = State.HellTeleports and State.HellTeleports.Dropper and State.HellTeleports.Dropper[name] or nil
+                        if data then
+                            middleLastDropperName = name
+                            middleLastDropperTime = os.clock()
+                            teleportWithData(data)
+                        end
+                        local startStep = os.clock()
+                        while token == State.HellMiddleTeleportToken and (os.clock() - startStep) < stepSeconds do
+                            if not isMiddleTeleportActive() then
+                                break
+                            end
+                            task.wait(0.1)
+                        end
+                    end
+                end
+            end
+        end)
+    end
+
+    local function applyMiddleEnabled()
+        middleEnabled = Config.HellMiddleEnabled == true
+        middleSkipMaxedDropperEnabled = Config.HellMiddleSkipMaxedDropper == true
+        if middleEnabled then
+            if canMiddleTeleport() then
+                attachMiddlePromptListener()
+                attachMiddlePopupListener()
+                runMiddleInitialTeleport()
+            else
+                stopMiddleTeleportLoop()
+                setMiddleTeleportLabel("Hold: idle")
+            end
+        else
+            detachMiddlePromptListener()
+            detachMiddlePopupListener()
+            middleInitialToken += 1
+            middleInitialRunning = false
+            middleInitialDone = false
+            stopMiddleTeleportLoop()
+        end
+        if State.FullAutomationLog and State.FullAutomationLog.SetActive then
+            State.FullAutomationLog.SetActive("HellMiddleAutomation", "Middle Automation (Hell World)", middleEnabled)
+        end
+    end
+
+    local MiddleControls = {}
+    local function addMiddleControl(ctrl)
+        MiddleControls[#MiddleControls + 1] = ctrl
+        return ctrl
+    end
+
+    local MiddleEnabledToggle = createToggle(MiddleAutomationSection, "On/Off", "HellMiddleEnabled", Config.HellMiddleEnabled, function(v)
+        setControlsEnabled(MiddleControls, v)
+        applyMiddleEnabled()
+    end)
+
+    local MiddleDescriptionLabel = Instance.new("TextLabel")
+    MiddleDescriptionLabel.Size = UDim2.new(1, 0, 0, 34)
+    MiddleDescriptionLabel.BackgroundTransparency = 1
+    MiddleDescriptionLabel.Font = Enum.Font.Gotham
+    MiddleDescriptionLabel.TextSize = 12
+    MiddleDescriptionLabel.TextXAlignment = Enum.TextXAlignment.Left
+    MiddleDescriptionLabel.TextYAlignment = Enum.TextYAlignment.Top
+    MiddleDescriptionLabel.TextWrapped = true
+    MiddleDescriptionLabel.Text = "Middle Automation fokus untuk teleport: otomatis ke Rune dan Dropper sesuai urutan."
+    MiddleDescriptionLabel.Parent = MiddleAutomationSection
+    registerTheme(MiddleDescriptionLabel, "TextColor3", "Muted")
+
+    local MiddleTeleportLogicToggle = addMiddleControl(createToggle(MiddleAutomationSection, "Enable Teleport Logic", "HellMiddleTeleportLogicEnabled", Config.HellMiddleTeleportLogicEnabled, function(v)
+        Config.HellMiddleTeleportLogicEnabled = v == true
+        saveConfig()
+        if canMiddleTeleport() then
+            if middleEnabled then
+                attachMiddlePromptListener()
+                attachMiddlePopupListener()
+                if middleInitialDone and not middleInitialRunning then
+                    startMiddleTeleportLoop()
+                    local holdSeconds = math.clamp(tonumber(Config.HellMiddleTeleportHold) or 15, 15, 900)
+                    setMiddleTeleportLabel(string.format("Hold: %.1fs", holdSeconds))
+                else
+                    runMiddleInitialTeleport()
+                end
+            end
+        else
+            detachMiddlePromptListener()
+            detachMiddlePopupListener()
+            stopMiddleTeleportLoop()
+        end
+    end))
+
+    local MiddleHoldSlider = addMiddleControl(createSlider(MiddleAutomationSection, "Rune Hold (sec)", "HellMiddleTeleportHold", 15, 900, Config.HellMiddleTeleportHold, nil, 0))
+    local MiddleTeleportCountdownLabel = (function()
+        local frame = Instance.new("Frame")
+        frame.Size = UDim2.new(1, 0, 0, 24)
+        frame.BorderSizePixel = 0
+        frame.Parent = MiddleAutomationSection
+        registerTheme(frame, "BackgroundColor3", "Main")
+        addCorner(frame, 6)
+        addStroke(frame, "Muted", 1, 0.8)
+
+        local pad = Instance.new("UIPadding")
+        pad.PaddingLeft = UDim.new(0, 8)
+        pad.PaddingRight = UDim.new(0, 8)
+        pad.Parent = frame
+
+        local label = Instance.new("TextLabel")
+        label.Size = UDim2.new(1, 0, 1, 0)
+        label.BackgroundTransparency = 1
+        label.Font = Enum.Font.Gotham
+        label.TextSize = 12
+        label.TextXAlignment = Enum.TextXAlignment.Left
+        label.Text = "Hold: idle"
+        label.Parent = frame
+        registerTheme(label, "TextColor3", "Muted")
+
+        return {
+            Set = function(_, text)
+                label.Text = text or "Hold: idle"
+            end
+        }
+    end)()
+    State.HellMiddleTeleportLabel = MiddleTeleportCountdownLabel
+
+    if State.HellMiddleTeleportLabelText then
+        setMiddleTeleportLabel(State.HellMiddleTeleportLabelText)
+    elseif canMiddleTeleport() then
+        local holdSeconds = math.clamp(tonumber(Config.HellMiddleTeleportHold) or 15, 15, 900)
+        if State.HellMiddleTeleportRunning and State.HellMiddleTeleportHoldStart and State.HellMiddleTeleportHoldSeconds then
+            local remaining = math.max(0, State.HellMiddleTeleportHoldSeconds - (os.clock() - State.HellMiddleTeleportHoldStart))
+            setMiddleTeleportLabel(string.format("Hold: %.1fs", remaining))
+        else
+            setMiddleTeleportLabel(string.format("Hold: %.1fs", holdSeconds))
+        end
+    else
+        setMiddleTeleportLabel("Hold: idle")
+    end
+
+    local MiddleStepSlider = addMiddleControl(createSlider(MiddleAutomationSection, "Dropper Step (sec)", "HellMiddleTeleportStep", 1, 10, Config.HellMiddleTeleportStep, nil, 1))
+    local MiddleSkipDropperToggle = addMiddleControl(createToggle(MiddleAutomationSection, "Skip Maxed Level Dropper", "HellMiddleSkipMaxedDropper", Config.HellMiddleSkipMaxedDropper, function(v)
+        middleSkipMaxedDropperEnabled = v == true
+    end))
+
+    local middleDropperListContainer
+    addMiddleControl(createListDropdownRow(MiddleAutomationSection, "Dropper List", function(open)
+        if middleDropperListContainer then
+            middleDropperListContainer.Visible = open
+        end
+    end))
+
+    local middleDropperListContent = createSubSectionBox(MiddleAutomationSection, "Dropper List")
+    middleDropperListContainer = middleDropperListContent.Parent
+    middleDropperListContainer.Visible = false
+
+    local MiddleDropperToggleRefs = {}
+    for _, name in ipairs(DropperOrder) do
+        local ctrl = createToggle(middleDropperListContent, "Dropper " .. name, nil, middleDropperEnabled[name], function(v)
+            middleDropperEnabled[name] = v
+            Config.HellMiddleDroppers[name] = v
+            saveConfig()
+        end)
+        MiddleDropperToggleRefs[name] = ctrl
+        addMiddleControl(ctrl)
+    end
+
+    createButton(MiddleAutomationSection, "Reset Middle Automation", function()
+        local defaults = {
+            Enabled = false,
+            TeleportLogicEnabled = true,
+            TeleportHold = 15,
+            TeleportStep = 3,
+            SkipMaxedDropper = true
+        }
+
+        Config.HellMiddleEnabled = defaults.Enabled
+        Config.HellMiddleSkipMaxedDropper = defaults.SkipMaxedDropper
+        Config.HellMiddleTeleportLogicEnabled = defaults.TeleportLogicEnabled
+        Config.HellMiddleTeleportHold = defaults.TeleportHold
+        Config.HellMiddleTeleportStep = defaults.TeleportStep
+        if MiddleTeleportLogicToggle and MiddleTeleportLogicToggle.Set then
+            MiddleTeleportLogicToggle:Set(defaults.TeleportLogicEnabled)
+        end
+        if MiddleHoldSlider and MiddleHoldSlider.Set then
+            MiddleHoldSlider:Set(defaults.TeleportHold)
+        end
+        if MiddleStepSlider and MiddleStepSlider.Set then
+            MiddleStepSlider:Set(defaults.TeleportStep)
+        end
+        if MiddleSkipDropperToggle and MiddleSkipDropperToggle.Set then
+            MiddleSkipDropperToggle:Set(defaults.SkipMaxedDropper)
+        end
+
+        for _, name in ipairs(DropperOrder) do
+            local val = (name == "One")
+            middleDropperEnabled[name] = val
+            Config.HellMiddleDroppers[name] = val
+            if MiddleDropperToggleRefs[name] then
+                MiddleDropperToggleRefs[name]:Set(val)
+            end
+        end
+
+        if MiddleEnabledToggle and MiddleEnabledToggle.Set then
+            MiddleEnabledToggle:Set(defaults.Enabled)
+        end
+        saveConfig()
+        setControlsEnabled(MiddleControls, defaults.Enabled)
+        applyMiddleEnabled()
+    end)
+
+    setControlsEnabled(MiddleControls, middleEnabled)
+    applyMiddleEnabled()
+
+    local AdvancedAutomationSection = createSubSectionBox(FullAutomationSection, "Advanced Automation")
+    local advancedDropperEnabled = Config.HellAdvancedDroppers
+    local advancedEnabled = Config.HellAdvancedEnabled == true
+    local advancedSkipMaxedDropperEnabled = Config.HellAdvancedSkipMaxedDropper == true
+    local advPromptConn = nil
+    local advPopupConn = nil
+    local advancedDropperMaxed = {}
+    local advancedLastDropperName = nil
+    local advancedLastDropperTime = nil
+    State.HellAdvancedTeleportToken = State.HellAdvancedTeleportToken or 0
+    State.HellAdvancedTeleportRunning = State.HellAdvancedTeleportRunning or false
+
+    local function resetAdvancedDropperMaxed()
+        advancedDropperMaxed = {}
+    end
+
+    local function getAdvancedEnabledDropperCount()
+        local count = 0
+        for _, name in ipairs(DropperOrder) do
+            if advancedDropperEnabled[name] then
+                count += 1
+            end
+        end
+        return count
+    end
+
+    local function getAdvancedActiveDropperCount()
+        local count = 0
+        for _, name in ipairs(DropperOrder) do
+            if advancedDropperEnabled[name] then
+                if not advancedSkipMaxedDropperEnabled or not (advancedDropperMaxed[name] == true) then
+                    count += 1
+                end
+            end
+        end
+        return count
+    end
+
+    local function triggerAdvancedResetTeleport()
+        resetAdvancedDropperMaxed()
+    end
+
+    local function attachAdvancedPromptListener()
+        if advPromptConn then
+            return
+        end
+        local ok, remote = pcall(function()
+            return game:GetService("ReplicatedStorage").Packages.Knit.Services.RemotesService.RE.PromptNotification
+        end)
+        if not ok or not remote or not remote:IsA("RemoteEvent") then
+            return
+        end
+        advPromptConn = remote.OnClientEvent:Connect(function(_, msg)
+            if not advancedEnabled then
+                return
+            end
+            if type(msg) ~= "string" then
+                return
+            end
+            local lower = string.lower(msg)
+            if string.find(lower, "this dropper is already at max level", 1, true) then
+                if advancedLastDropperName then
+                    local now = os.clock()
+                    if not advancedLastDropperTime or (now - advancedLastDropperTime) <= 10 then
+                        advancedDropperMaxed[advancedLastDropperName] = true
+                        if getAdvancedActiveDropperCount() == 0 then
+                            stopAdvancedTeleportLoop()
+                        end
+                    end
+                end
+                return
+            end
+        end)
+        trackConnection(advPromptConn)
+    end
+
+    local function attachAdvancedPopupListener()
+        if advPopupConn then
+            return
+        end
+        local ok, remote = pcall(function()
+            return game:GetService("ReplicatedStorage").Packages.Knit.Services.RemotesService.RE.PopUp
+        end)
+        if not ok or not remote or not remote:IsA("RemoteEvent") then
+            return
+        end
+        advPopupConn = remote.OnClientEvent:Connect(function(...)
+            if not advancedEnabled then
+                return
+            end
+            local args = {...}
+            if argsHasMatch(args, "sinsgain") then
+                triggerAdvancedResetTeleport()
+            end
+        end)
+        trackConnection(advPopupConn)
+    end
+
+    local function detachAdvancedPromptListener()
+        if advPromptConn then
+            advPromptConn:Disconnect()
+            advPromptConn = nil
+        end
+    end
+
+    local function detachAdvancedPopupListener()
+        if advPopupConn then
+            advPopupConn:Disconnect()
+            advPopupConn = nil
+        end
+    end
+
+    local function isAdvancedActive()
+        return Config.HellAdvancedEnabled == true and State.HellAdvancedTeleportRunning == true
+    end
+
+    local function stopAdvancedTeleportLoop()
+        State.HellAdvancedTeleportRunning = false
+        State.HellAdvancedTeleportToken = (State.HellAdvancedTeleportToken or 0) + 1
+    end
+
+    local function startAdvancedTeleportLoop()
+        State.HellAdvancedTeleportToken = (State.HellAdvancedTeleportToken or 0) + 1
+        local token = State.HellAdvancedTeleportToken
+        State.HellAdvancedTeleportRunning = true
+        task.spawn(function()
+            while token == State.HellAdvancedTeleportToken do
+                if not isAdvancedActive() or getAdvancedEnabledDropperCount() < 2 or getAdvancedActiveDropperCount() == 0 then
+                    break
+                end
+                local stepSeconds = math.clamp(tonumber(Config.HellAdvancedTeleportStep) or 3, 1, 10)
+                for _, name in ipairs(DropperOrder) do
+                    if token ~= State.HellAdvancedTeleportToken or not isAdvancedActive() then
+                        break
+                    end
+                    local isMaxedDropper = advancedDropperMaxed[name] == true
+                    if advancedDropperEnabled[name] and (not advancedSkipMaxedDropperEnabled or not isMaxedDropper) then
+                        local data = State.HellTeleports and State.HellTeleports.Dropper and State.HellTeleports.Dropper[name] or nil
+                        if data then
+                            advancedLastDropperName = name
+                            advancedLastDropperTime = os.clock()
+                            teleportWithData(data)
+                        end
+                        local startStep = os.clock()
+                        while token == State.HellAdvancedTeleportToken and (os.clock() - startStep) < stepSeconds do
+                            if not isAdvancedActive() then
+                                break
+                            end
+                            task.wait(0.1)
+                        end
+                    end
+                end
+            end
+        end)
+    end
+
+    local function applyAdvancedEnabled()
+        advancedEnabled = Config.HellAdvancedEnabled == true
+        advancedSkipMaxedDropperEnabled = Config.HellAdvancedSkipMaxedDropper == true
+        if advancedEnabled then
+            attachAdvancedPromptListener()
+            attachAdvancedPopupListener()
+            stopAdvancedTeleportLoop()
+            if getAdvancedEnabledDropperCount() >= 2 and getAdvancedActiveDropperCount() > 0 then
+                startAdvancedTeleportLoop()
+            end
+        else
+            detachAdvancedPromptListener()
+            detachAdvancedPopupListener()
+            stopAdvancedTeleportLoop()
+        end
+        if State.FullAutomationLog and State.FullAutomationLog.SetActive then
+            State.FullAutomationLog.SetActive("HellAdvancedAutomation", "Advanced Automation (Hell World)", advancedEnabled)
+        end
+    end
+
+    local AdvancedControls = {}
+    local function addAdvancedControl(ctrl)
+        AdvancedControls[#AdvancedControls + 1] = ctrl
+        return ctrl
+    end
+
+    local AdvancedEnabledToggle = createToggle(AdvancedAutomationSection, "On/Off", "HellAdvancedEnabled", Config.HellAdvancedEnabled, function(v)
+        setControlsEnabled(AdvancedControls, v)
+        applyAdvancedEnabled()
+    end)
+
+    local AdvancedDescriptionLabel = Instance.new("TextLabel")
+    AdvancedDescriptionLabel.Size = UDim2.new(1, 0, 0, 34)
+    AdvancedDescriptionLabel.BackgroundTransparency = 1
+    AdvancedDescriptionLabel.Font = Enum.Font.Gotham
+    AdvancedDescriptionLabel.TextSize = 12
+    AdvancedDescriptionLabel.TextXAlignment = Enum.TextXAlignment.Left
+    AdvancedDescriptionLabel.TextYAlignment = Enum.TextYAlignment.Top
+    AdvancedDescriptionLabel.TextWrapped = true
+    AdvancedDescriptionLabel.Text = "Advanced Automation fokus teleport dropper saja, tanpa Madness Hold."
+    AdvancedDescriptionLabel.Parent = AdvancedAutomationSection
+    registerTheme(AdvancedDescriptionLabel, "TextColor3", "Muted")
+
+    local AdvancedStepSlider = addAdvancedControl(createSlider(AdvancedAutomationSection, "Dropper Step (sec)", "HellAdvancedTeleportStep", 1, 10, Config.HellAdvancedTeleportStep, nil, 1))
+    local AdvancedSkipDropperToggle = addAdvancedControl(createToggle(AdvancedAutomationSection, "Skip Maxed Level Dropper", "HellAdvancedSkipMaxedDropper", Config.HellAdvancedSkipMaxedDropper, function(v)
+        advancedSkipMaxedDropperEnabled = v == true
+        if getAdvancedEnabledDropperCount() < 2 or getAdvancedActiveDropperCount() == 0 then
+            stopAdvancedTeleportLoop()
+        elseif Config.HellAdvancedEnabled == true then
+            stopAdvancedTeleportLoop()
+            startAdvancedTeleportLoop()
+        end
+    end))
+
+    local advancedDropperListContainer
+    addAdvancedControl(createListDropdownRow(AdvancedAutomationSection, "Dropper List", function(open)
+        if advancedDropperListContainer then
+            advancedDropperListContainer.Visible = open
+        end
+    end))
+
+    local advancedDropperListContent = createSubSectionBox(AdvancedAutomationSection, "Dropper List")
+    advancedDropperListContainer = advancedDropperListContent.Parent
+    advancedDropperListContainer.Visible = false
+
+    local AdvancedDropperToggleRefs = {}
+    for _, name in ipairs(DropperOrder) do
+        local ctrl = createToggle(advancedDropperListContent, "Dropper " .. name, nil, advancedDropperEnabled[name], function(v)
+            advancedDropperEnabled[name] = v
+            Config.HellAdvancedDroppers[name] = v
+            saveConfig()
+            if getAdvancedEnabledDropperCount() < 2 or getAdvancedActiveDropperCount() == 0 then
+                stopAdvancedTeleportLoop()
+            elseif Config.HellAdvancedEnabled == true then
+                stopAdvancedTeleportLoop()
+                startAdvancedTeleportLoop()
+            end
+        end)
+        AdvancedDropperToggleRefs[name] = ctrl
+        addAdvancedControl(ctrl)
+    end
+
+    setControlsEnabled(AdvancedControls, advancedEnabled)
+    applyAdvancedEnabled()
 end
 
 do
@@ -11502,7 +12359,17 @@ do
             0.500,
             40.000
         )},
-        {Label = "Boss", Data = makeData(
+        {Label = "Cookies Shop", Data = makeData(
+            Vector3.new(-3950.000, 15.153, -16.744),
+            CFrame.new(-3956.110352, 20.709223, -25.940693, -0.832916617, 0.190834999, -0.519453526, 0.000000000, 0.938660860, 0.344841897, 0.553398550, 0.287224561, -0.781826198),
+            CFrame.new(-3950.000244, 16.653000, -16.744415, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+            70.000,
+            Enum.CameraType.Custom,
+            11.762563,
+            0.500,
+            40.000
+        )},
+        {Label = "Boss Attack", Data = makeData(
             Vector3.new(-3956.069, 15.153, -22.492),
             CFrame.new(-3969.000244, 34.169048, -34.533123, -0.681481421, 0.515227735, -0.519734144, 0.000000000, 0.710178971, 0.704021275, 0.731835485, 0.479777426, -0.483973742),
             CFrame.new(-3956.069336, 16.653000, -22.491856, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
@@ -11522,13 +12389,13 @@ do
             0.500,
             40.000
         )},
-        {Label = "Cookies Shop", Data = makeData(
-            Vector3.new(-3950.000, 15.153, -16.744),
-            CFrame.new(-3956.110352, 20.709223, -25.940693, -0.832916617, 0.190834999, -0.519453526, 0.000000000, 0.938660860, 0.344841897, 0.553398550, 0.287224561, -0.781826198),
-            CFrame.new(-3950.000244, 16.653000, -16.744415, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+        {Label = "Christmas Rank", Data = makeData(
+            Vector3.new(-3992.259, 14.653, 4.077),
+            CFrame.new(-3993.103760, 22.842583, -12.366984, -0.998683393, 0.019310094, -0.047525570, 0.000000000, 0.926447392, 0.376424432, 0.051298730, 0.375928819, -0.925227523),
+            CFrame.new(-3992.259033, 16.152540, 4.076718, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
             70.000,
             Enum.CameraType.Custom,
-            11.762563,
+            17.772608,
             0.500,
             40.000
         )},
@@ -11552,33 +12419,13 @@ do
             0.500,
             40.000
         )},
-        {Label = "Santa House", Data = makeData(
-            Vector3.new(-4078.338, 14.653, -62.542),
-            CFrame.new(-4069.680664, 25.191797, -47.583694, 0.865496933, -0.232152030, 0.443869978, 0.000000000, 0.886119723, 0.463456601, -0.500914276, -0.401120275, 0.766933858),
-            CFrame.new(-4078.337891, 16.152540, -62.541973, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
-            70.000,
-            Enum.CameraType.Custom,
-            19.503996,
-            0.500,
-            40.000
-        )},
-        {Label = "Tree 1", Data = makeData(
+        {Label = "Christmas Tree", Data = makeData(
             Vector3.new(-4024.671, 14.653, -72.131),
             CFrame.new(-4024.057861, 37.363960, -48.716015, 0.999657154, -0.017577140, 0.019409774, 0.000000000, 0.741233408, 0.671247482, -0.026185781, -0.671017349, 0.740979195),
             CFrame.new(-4024.671143, 16.152540, -72.130959, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
             70.000,
             Enum.CameraType.Custom,
             31.600000,
-            0.500,
-            40.000
-        )},
-        {Label = "Tree 2", Data = makeData(
-            Vector3.new(-4024.917, 14.653, -103.420),
-            CFrame.new(-4024.495850, 38.525967, -81.107956, 0.999822140, -0.013351330, 0.013316875, 0.000000000, 0.706192613, 0.708019793, -0.018857284, -0.707893848, 0.706067085),
-            CFrame.new(-4024.916748, 16.152540, -103.419678, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
-            70.000,
-            Enum.CameraType.Custom,
-            31.600004,
             0.500,
             40.000
         )},
@@ -11589,16 +12436,6 @@ do
             70.000,
             Enum.CameraType.Custom,
             15.203171,
-            0.500,
-            40.000
-        )},
-        {Label = "Christmas Rank", Data = makeData(
-            Vector3.new(-3992.259, 14.653, 4.077),
-            CFrame.new(-3993.103760, 22.842583, -12.366984, -0.998683393, 0.019310094, -0.047525570, 0.000000000, 0.926447392, 0.376424432, 0.051298730, 0.375928819, -0.925227523),
-            CFrame.new(-3992.259033, 16.152540, 4.076718, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
-            70.000,
-            Enum.CameraType.Custom,
-            17.772608,
             0.500,
             40.000
         )},
@@ -11613,12 +12450,134 @@ do
             40.000
         )}
     }
-    registerRuneLocations("Christmas Event", ChristmasList)
+    local SantaHouseData = makeData(
+        Vector3.new(-4078.338, 14.653, -62.542),
+        CFrame.new(-4069.680664, 25.191797, -47.583694, 0.865496933, -0.232152030, 0.443869978, 0.000000000, 0.886119723, 0.463456601, -0.500914276, -0.401120275, 0.766933858),
+        CFrame.new(-4078.337891, 16.152540, -62.541973, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+        70.000,
+        Enum.CameraType.Custom,
+        19.503996,
+        0.500,
+        40.000
+    )
+    local Christmas2List = {
+        {Label = "Santa Rank", Data = makeData(
+            Vector3.new(-5345.309, 8.863, -30.331),
+            CFrame.new(-5346.076660, 15.282122, -15.965839, 0.998574734, 0.017269555, -0.050501216, 0.000000000, 0.946205258, 0.323567301, 0.053372376, -0.323106140, 0.944856524),
+            CFrame.new(-5345.309082, 10.362863, -30.330683, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+            70.000,
+            Enum.CameraType.Custom,
+            15.203191,
+            0.500,
+            40.000
+        )},
+        {Label = "Christmas Spirit Shop", Data = makeData(
+            Vector3.new(-5365.947, 9.013, -23.335),
+            CFrame.new(-5347.872559, 17.752674, -22.198046, 0.062781319, -0.370464027, 0.926722765, 0.000000000, 0.928554535, 0.371196270, -0.998027325, -0.023304192, 0.058295876),
+            CFrame.new(-5365.947266, 10.512862, -23.335049, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+            70.000,
+            Enum.CameraType.Custom,
+            19.503916,
+            0.500,
+            40.000
+        )},
+        {Label = "Milestone", Data = makeData(
+            Vector3.new(-5279.860, 9.013, -6.832),
+            CFrame.new(-5296.197266, 13.841234, -12.985852, -0.352486104, 0.175255567, -0.919260025, 0.000000000, 0.982307374, 0.187275469, 0.935817003, 0.066012003, -0.346249729),
+            CFrame.new(-5279.859863, 10.512862, -6.832094, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+            70.000,
+            Enum.CameraType.Custom,
+            17.772381,
+            0.500,
+            40.000
+        )},
+        {Label = "Christmas Miracle", Data = makeData(
+            Vector3.new(-5326.094, 9.263, 59.700),
+            CFrame.new(-5320.421875, 16.022598, 41.795265, -0.953299105, -0.081449270, 0.290838182, 0.000000000, 0.962951541, 0.269674689, -0.302027851, 0.257080644, -0.917980850),
+            CFrame.new(-5326.094238, 10.762862, 59.699566, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+            70.000,
+            Enum.CameraType.Custom,
+            19.503962,
+            0.500,
+            40.000
+        )},
+        {Label = "Gingerbread Shop", Data = makeData(
+            Vector3.new(-5292.908, 9.764, 11.415),
+            CFrame.new(-5288.702148, 18.611965, -1.212794, -0.948768973, -0.152724087, 0.276609242, 0.000000000, 0.875427544, 0.483349323, -0.315970421, 0.458586842, -0.830578625),
+            CFrame.new(-5292.907715, 11.263508, 11.414659, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+            70.000,
+            Enum.CameraType.Custom,
+            15.203262,
+            0.500,
+            40.000
+        )},
+        {Label = "Tree 1", Data = makeData(
+            Vector3.new(-5404.420, 8.763, 6.664),
+            CFrame.new(-5392.407227, 28.919094, 0.526898, -0.454932183, -0.721633732, 0.521805823, 0.000000000, 0.585952282, 0.810345471, -0.890526056, 0.368652225, -0.266568571),
+            CFrame.new(-5404.420410, 10.262862, 6.663990, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+            70.000,
+            Enum.CameraType.Custom,
+            23.022497,
+            0.500,
+            40.000
+        )},
+        {Label = "Tree 2", Data = makeData(
+            Vector3.new(-5452.540, 8.763, 3.001),
+            CFrame.new(-5434.297852, 27.170788, 2.408738, -0.032467175, -0.679220676, 0.733215630, 0.000000000, 0.733602345, 0.679579020, -0.999472737, 0.022064012, -0.023817999),
+            CFrame.new(-5452.540039, 10.262862, 3.001330, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+            70.000,
+            Enum.CameraType.Custom,
+            24.879841,
+            0.500,
+            40.000
+        )},
+        {Label = "Rune 1", Data = makeData(
+            Vector3.new(-5330.278, 9.921, -4.371),
+            CFrame.new(-5326.450195, 17.671034, -15.866415, -0.948768973, -0.144858286, 0.280808926, 0.000000000, 0.888717949, 0.458454609, -0.315970838, 0.434967518, -0.843187928),
+            CFrame.new(-5330.278320, 11.420886, -4.371168, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+            70.000,
+            Enum.CameraType.Custom,
+            13.633033,
+            0.500,
+            40.000
+        )},
+        {Label = "Rune 2", Data = makeData(
+            Vector3.new(-5312.343, 9.921, 32.681),
+            CFrame.new(-5317.883301, 22.096531, 26.262596, -0.756988525, 0.511679411, -0.406389534, 0.000000000, 0.621934533, 0.783069193, 0.653428078, 0.592774391, -0.470797360),
+            CFrame.new(-5312.342773, 11.420887, 32.681015, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+            70.000,
+            Enum.CameraType.Custom,
+            13.633156,
+            0.500,
+            40.000
+        )},
+        {Label = "Claim", Data = makeData(
+            Vector3.new(-5294.780, 9.663, -30.830),
+            CFrame.new(-5306.954102, 17.276363, -30.306751, 0.042931765, 0.447980076, -0.893012166, 0.000000000, 0.893836260, 0.448393494, 0.999077976, -0.019250324, 0.038373969),
+            CFrame.new(-5294.779785, 11.163379, -30.829906, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000, 0.000000000, 0.000000000, 0.000000000, 1.000000000),
+            70.000,
+            Enum.CameraType.Custom,
+            13.632911,
+            0.500,
+            40.000
+        )}
+    }
+    local Christmas2TeleportMap = {}
+    for _, item in ipairs(Christmas2List) do
+        Christmas2TeleportMap[item.Label] = item.Data
+    end
+    local ChristmasTeleportAll = {}
+    for _, item in ipairs(ChristmasList) do
+        ChristmasTeleportAll[#ChristmasTeleportAll + 1] = item
+    end
+    for _, item in ipairs(Christmas2List) do
+        ChristmasTeleportAll[#ChristmasTeleportAll + 1] = item
+    end
+    registerRuneLocations("Christmas Event", ChristmasTeleportAll)
     createGrid(ChristmasTeleportSection, ChristmasList, function(item)
         teleportWithData(item.Data)
     end)
 
-    local ChristmasCandySection = createSectionBox(State.Tabs.Christmas:GetPage(), "Collect")
     local ChristmasCandyList = {
         {
             Label = "Collect Candy Canes",
@@ -11979,7 +12938,42 @@ do
         teleportWithData(list[item.Index])
     end
 
-    createGrid(ChristmasCandySection, ChristmasCandyList, cycleChristmasCandyTeleport)
+    createButton(ChristmasTeleportSection, "Collect Candy Canes", function()
+        cycleChristmasCandyTeleport(ChristmasCandyList[1])
+    end)
+    createButton(ChristmasTeleportSection, "Santa House", function()
+        teleportWithData(SantaHouseData)
+    end)
+    local Christmas2TeleportGridOrder = {
+        "Gingerbread Shop",
+        "Christmas Spirit Shop",
+        "Milestone",
+        "Santa Rank",
+        "Tree 1",
+        "Tree 2",
+        "Rune 1",
+        "Rune 2",
+        "Claim"
+    }
+    local Christmas2TeleportGridList = {}
+    for _, label in ipairs(Christmas2TeleportGridOrder) do
+        local data = Christmas2TeleportMap[label]
+        if data then
+            Christmas2TeleportGridList[#Christmas2TeleportGridList + 1] = {
+                Label = label,
+                Data = data
+            }
+        end
+    end
+    createGrid(ChristmasTeleportSection, Christmas2TeleportGridList, function(item)
+        teleportWithData(item.Data)
+    end)
+    local miracleData = Christmas2TeleportMap["Christmas Miracle"]
+    if miracleData then
+        createButton(ChristmasTeleportSection, "Christmas Miracle", function()
+            teleportWithData(miracleData)
+        end)
+    end
 
     State.InitChristmas = function()
         local ChristmasAutomationSection = createSectionBox(State.Tabs.Christmas:GetPage(), "Automation")
@@ -12049,6 +13043,38 @@ do
                         "Christmas Spirit multi",
                         "Blizz Said Rank6 was hard",
                         "Ultra Santa Damage"
+                    }
+                },
+                {
+                    Key = "Christmas Spirit",
+                    DisplayName = "Christmas Spirit",
+                    ShopName = "Christmas Spirit",
+                    Items = {
+                        "Christmas Spirit Multiplier",
+                        "Gingerbread Multiplier",
+                        "Cookies Multiplier",
+                        "Santa Damage Multiplier"
+                    }
+                },
+                {
+                    Key = "Gingerbread",
+                    DisplayName = "Gingerbread",
+                    ShopName = "Gingerbread",
+                    Items = {
+                        "Gingerbread Multiplier",
+                        "Gingerbread Multiplier II",
+                        "Gingerbread Multiplier III",
+                        "Christmas Spirit Multiplier",
+                        "Connor Balanced it Part 2",
+                        "Cookies Multiplier",
+                        "Candy Cane Multiplier",
+                        "Santa Damage Multiplier",
+                        "Milk Multiplier",
+                        "Christmas Bulk Multiplier",
+                        "Christmas Bulk",
+                        "Christmas Luck Multiplier",
+                        "Return of the Candy Cane",
+                        "Even More Cookies"
                     }
                 }
             }
@@ -12256,7 +13282,6 @@ local function setupHeavenAutoShop(section, opts)
     State[opts.StateIndexKey] = 1
     State[opts.StateOrderKey] = opts.Items
 
-    setGlobalClickCooldown(opts.CooldownKey, opts.DefaultCooldown or 0.6)
     for _, name in ipairs(opts.Items) do
         itemEnabled[name] = true
     end
@@ -12347,7 +13372,7 @@ local function setupHeavenAutoShop(section, opts)
                     local remote = getGraceRemote()
                     if not remote then return end
                     local now = os.clock()
-                    if now - lastClick < getGlobalClickCooldown(opts.CooldownKey) then
+                    if now - lastClick < getGlobalClickCooldown("AutoBuyGlobal") then
                         return
                     end
                     local action = useUpgradeAll and "UpgradeAll" or "Upgrade"
@@ -12375,10 +13400,6 @@ local function setupHeavenAutoShop(section, opts)
     addControl(createToggle(container, opts.ModeToggleName or "Mode: Upgrade All", nil, true, function(v)
         useUpgradeAll = v
     end))
-
-    addControl(createSlider(container, opts.SpeedLabel or "Click Speed (sec)", nil, 0.1, 5, opts.DefaultCooldown or 0.6, function(v)
-        setGlobalClickCooldown(opts.CooldownKey, v)
-    end, 1))
 
     addControl(createToggle(container, "Skip Maxed Items", nil, true, function(v)
         skipMaxedEnabled = v
@@ -12587,7 +13608,7 @@ setupAutoShop = function(section, opts)
                     end
                     if not remote then return end
                     local now = os.clock()
-                    if now - lastClick < getGlobalClickCooldown(opts.CooldownKey) then
+                    if now - lastClick < getGlobalClickCooldown("AutoBuyGlobal") then
                         return
                     end
                     local action = useUpgradeAll and "UpgradeAll" or "Upgrade"
@@ -12615,10 +13636,6 @@ setupAutoShop = function(section, opts)
     addControl(createToggle(container, opts.ModeToggleName or "Mode: Upgrade All", nil, true, function(v)
         useUpgradeAll = v
     end))
-
-    addControl(createSlider(container, opts.SpeedLabel or "Click Speed (sec)", nil, 0.1, 5, opts.DefaultCooldown or 0.6, function(v)
-        setGlobalClickCooldown(opts.CooldownKey, v)
-    end, 1))
 
     addControl(createToggle(container, "Skip Maxed Items", nil, true, function(v)
         skipMaxedEnabled = v
